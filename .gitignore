@@ -1,0 +1,24 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.so
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS system files
+.DS_Store
+
+# VSCode and other IDE/editor config
+.vscode/
+.idea/
+
+# Environment and virtualenvs (optional)
+.env
+.venv/
+env/
+venv/
+*.env
+
+# Dataset folder (if large or user-specific)
+dataset/
