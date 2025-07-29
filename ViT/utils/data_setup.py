@@ -52,7 +52,9 @@ def create_dataloaders(
       batch_size=batch_size,
       shuffle=True,
       num_workers=num_workers,
-      pin_memory=True,
+      # pin_memory=True in your DataLoader enables page-locked (pinned) memory allocation for faster data transfer from CPU to GPU (for CUDA)
+      # No effect, safe to ignore for: MacOS (M1/M2/M3)
+      pin_memory=True, 
   )
   test_dataloader = DataLoader(
       test_data,
