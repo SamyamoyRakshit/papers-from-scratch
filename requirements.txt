@@ -1,9 +1,0 @@
-ipykernel==6.29.5
-ipython==9.3.0
-matplotlib==3.10.3
-numpy==2.3.1
-requests==2.32.4
-torch==2.4.1
-torchinfo==1.8.0
-torchvision==0.19.1
-tqdm==4.67.1

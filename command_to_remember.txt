@@ -1,2 +1,27 @@
-pip freeze > requirements.lock.txt
-conda env export > environment.yml
+# NOTE:
+# - `uv.lock` is the authoritative source of exact package versions.
+# - `pyproject.toml` defines the project and its dependencies (similar to package.json in JS).
+
+# 1. Initialize project (if not already)
+uv init
+
+# 2. Add dependencies to pyproject.toml (manually or using this)
+uv pip add <package-name>
+
+# Example:
+uv pip add torch torchvision matplotlib ipykernel tqdm requests numpy torchinfo
+
+# 3. Compile lock file from pyproject.toml
+uv pip compile pyproject.toml --output-file uv.lock
+
+# 4. Install dependencies from lock file
+uv pip install --requirements uv.lock
+
+# 5. Update lock file when pyproject.toml changes
+uv pip compile pyproject.toml --output-file uv.lock
+
+# 6. Sync virtual environment to match lock file
+uv pip sync --requirements uv.lock
+
+# 7. Optional: Export current environment to requirements.txt (not needed if using uv.lock)
+pip freeze > requirements.txt

@@ -1,0 +1,33 @@
+[project]
+name = "replicating-papers-on-customdata"
+version = "0.1.0"
+description = "Replication of SOTA AI/ML Models from Scratch Using PyTorch on a Custom Dataset"
+authors = [
+    {name = "Samyamoy Rakshit", email = "samyamoyrakshit@gmail.com"}
+]
+requires-python = ">=3.12"
+dependencies = [
+    "ipykernel==6.29.5",
+    "ipython==9.3.0",
+    "matplotlib==3.10.3",
+    "numpy==2.3.1",
+    "requests==2.32.4",
+    "torch==2.4.1",
+    "torchinfo==1.8.0",
+    "torchvision==0.19.1",
+    "tqdm==4.67.1",
+    "ipywidgets==8.1.7",
+    "jupyterlab-widgets==3.0.15",
+    "widgetsnbextension==4.0.14"
+]
+readme = { file = "README.md", content-type = "text/markdown" }
+
+license = { text = "MIT" } 
+keywords = ["pytorch", "vit", "alexnet", "deep-learning", "image-classification"]
+
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux"
+]
