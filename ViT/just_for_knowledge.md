@@ -7,7 +7,7 @@ According to the spec, spaces are not allowed in URLs.So they must be encoded.
 | `?`       | `%3F`               |
 | `#`       | `%23`               |
 
-Example: 
+Example: \
 This will break in HTML:
 ```
 <img src="Markdown Images/table.png" />
