@@ -34,25 +34,25 @@ Here are the steps to create and activate the `virtual environment`:
 
 1. Add uv to your PATH in zsh:
 
-```bash
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
-```
+    ```bash
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+    source ~/.zshrc
+    ```
 
 2. Now Check: 
 
-```bash
-uv --version
-```
+    ```bash
+    uv --version
+    ```
 
 3. Then Install Virtual Environment:
 
-```bash
-uv venv .venv-papers-replication --python 3.12
-```
+    ```bash
+    uv venv .venv-papers-replication --python 3.12
+    ```
 
 4. Activate it:
 
-```bash
-source .venv-papers-replication/bin/activate
-```
+    ```bash
+    source .venv-papers-replication/bin/activate
+    ```
