@@ -40,3 +40,6 @@ dataset/
 
 # uv or pip-lock file (optional: ignore if you want fresh install on every clone)
 uv.lock
+
+# Models
+ViT/models
