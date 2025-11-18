@@ -36,13 +36,14 @@ dist/
 .pytest_cache/
 
 # Dataset and data folders (optional: include if large or unnecessary to track)
-dataset/
+dataset/test
+dataset/train
 
 # uv or pip-lock file (optional: ignore if you want fresh install on every clone)
 uv.lock
 
 # Models
-ViT/models
+# ViT/models
 
 # Markdowns
-ViT/just_for_knowledge.md
+# ViT/just_for_knowledge.md
