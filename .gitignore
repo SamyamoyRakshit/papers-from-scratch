@@ -43,7 +43,7 @@ dataset/train
 uv.lock
 
 # Models
-# ViT/models
+ViT/models
 
 # Markdowns
 # ViT/just_for_knowledge.md
