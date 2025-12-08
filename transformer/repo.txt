@@ -1,0 +1,47 @@
+.
+├── README.md                      # Main explanation + how to run + results
+├── repo.tree                      # Auto-generated folder tree (for documentation)
+├── requirements.txt               # ONLY for this branch (self-contained env)
+├── Transformer.ipynb              # Main Jupyter notebook (training + inference)
+├── just_for_knowledge.md          # Theory + math + paper notes
+├── markdown_images/               # All diagrams used in README / notes
+│   ├── attention.png
+│   ├── positional_encoding.png
+│   └── transformer_architecture.png
+├── models/
+│   ├── __init__.py
+│   ├── transformer.py             # Full model (Encoder + Decoder)
+│   ├── encoder.py                 # Encoder stack
+│   ├── decoder.py                 # Decoder stack
+│   └── modules/
+│       ├── multi_head_attention.py
+│       ├── feed_forward.py
+│       ├── positional_encoding.py
+│       ├── layer_norm.py
+│       └── embeddings.py
+├── utils/
+│   ├── __init__.py
+│   ├── mask_utils.py              # padding mask, lookahead mask
+│   ├── train_utils.py             # training loops, batching, accuracy, logs
+│   ├── optimizer.py               # Noam scheduler + Adam wrapper
+│   ├── loss.py                    # Label smoothing, cross entropy
+│   └── data_utils.py              # tokenization, vocab load, dataset utils
+├── scripts/
+│   ├── train.py                   # train with CLI args
+│   ├── inference.py               # greedy / beam search inference
+│   └── evaluate.py                # BLEU score, perplexity
+├── data/
+│   ├── raw/                       # Raw text files (e.g., toy en-de dataset)
+│   ├── processed/                 # tokenized, numericalized
+│   └── vocab/                     # vocabulary files or BPE merges
+├── configs/
+│   ├── base.yaml                  # Standard Transformer config from the paper
+│   ├── tiny.yaml                  # Small model for sanity checks
+│   └── experiment1_wmt.yaml       # Example training config
+├── checkpoints/
+│   ├── last.pt                    # Last saved model
+│   └── best.pt                    # Best BLEU model
+└── ray/                           # OPTIONAL (Only if using Ray) 
+    ├── tune_config.yaml             # Ray Tune search space
+    ├── train_ray.py                 # Distributed training using Ray Train
+    └── tune_experiment.py           # Ray Tune hyperparam search script

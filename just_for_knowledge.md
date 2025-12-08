@@ -23,7 +23,7 @@ This works:
 <u> `uv` installed to: </u>
 
 ```swift
-/Users/samyamoyrakshit/.local/bin
+/Users/username/.local/bin
 ```
 ...but that directory isn’t in your zsh `PATH`, so your terminal can’t find `uv`.
 
