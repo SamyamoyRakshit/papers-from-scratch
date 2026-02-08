@@ -1,0 +1,24 @@
+# ===========================================
+# Transformer Project Requirements
+# ===========================================
+# Note: Versions matching pyproject.toml where applicable
+
+# Core ML (matches pyproject.toml)
+torch==2.4.1
+numpy==2.3.1
+tqdm==4.67.1
+matplotlib==3.10.3
+
+# Data Loading & Tokenization (transformer-specific)
+datasets>=2.14.0           # HuggingFace datasets (for ai4bharat/wiki-translate)
+tokenizers>=0.15.0         # Fast BPE tokenizer
+
+# Evaluation
+sacrebleu>=2.4.0           # BLEU score (standard for NMT)
+
+# Config & Logging
+pyyaml>=6.0                # YAML config file parsing
+tensorboard>=2.14.0        # Training visualization
+
+# Optional: If you want nicer experiment tracking later
+# wandb>=0.15.0            # Weights & Biases (uncomment if needed)

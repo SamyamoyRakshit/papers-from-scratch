@@ -41,7 +41,19 @@
 ├── checkpoints/
 │   ├── last.pt                    # Last saved model
 │   └── best.pt                    # Best BLEU model
-└── ray/                           # OPTIONAL (Only if using Ray) 
-    ├── tune_config.yaml             # Ray Tune search space
-    ├── train_ray.py                 # Distributed training using Ray Train
-    └── tune_experiment.py           # Ray Tune hyperparam search script
+└── docs/                          # documentation
+    ├── modules/
+    │   ├── layer_norm.md
+    │   ├── layer_norm_math.md
+    │   ├── embeddings.md
+    │   ├── positional_encoding.md
+    │   ├── multi_head_attention.md
+    │   └── feed_forward.md
+    ├── architecture/
+    │   ├── encoder.md
+    │   ├── decoder.md
+    │   └── transformer.md
+    └── utils/
+        ├── mask_utils.md
+        ├── optimizer.md
+        └── loss.md
