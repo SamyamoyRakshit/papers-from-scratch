@@ -58,7 +58,12 @@ Here are the steps to create and activate the `virtual environment`:
     ```
 
 
-command I used to save repo tree (remove pycache from repo):
+#### command I used to save repo tree (remove pycache from repo):
 ```bash
 tree -I "__pycache__" > repo.tree
+```
+
+#### Run this to main terminal to check about `gpu` (for mac only):
+```bash
+system_profiler SPDisplaysDataType
 ```

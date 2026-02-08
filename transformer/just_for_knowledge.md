@@ -3,6 +3,7 @@
 2. [How the `forward` function in PyTorch returns `class` value when we do not call `forward`?](#2-how-the-forward-function-in-pytorch-returns-class-value-when-we-do-not-call-forward)
 3. [`hooks`](#3-hooks)
 
+
 ## 1. `nn.Parameter`: 
 
 `nn.Parameter` designates a tensor as a **trainable model parameter**, ensuring it is tracked by autograd, updated by optimizers, and persisted in the model’s state for checkpointing and deployment.
