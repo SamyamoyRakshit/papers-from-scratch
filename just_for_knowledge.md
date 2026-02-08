@@ -1,4 +1,4 @@
-**For Image Path URL:**\
+### For Image Path URL:
 According to the spec, spaces are not allowed in URLs.So they must be encoded.
 
 | Character | URL-encoded version |
@@ -57,13 +57,21 @@ Here are the steps to create and activate the `virtual environment`:
     source .venv-papers-replication/bin/activate
     ```
 
+---
 
-#### command I used to save repo tree (remove pycache from repo):
+### command I used to save repo tree (remove pycache from repo):
 ```bash
 tree -I "__pycache__" > repo.tree
 ```
+---
 
-#### Run this to main terminal to check about `gpu` (for mac only):
+### Run this to main terminal to check about `gpu` (for mac only):
 ```bash
 system_profiler SPDisplaysDataType
 ```
+---
+
+### Turn off VS Code's auto code suggestion: 
+[turn off copilot](https://www.youtube.com/watch?v=vigk0UKMCbs)
+
+----

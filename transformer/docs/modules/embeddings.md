@@ -1,7 +1,8 @@
 ## 📋 Table of Contents
 1. [Why multiply by sqrt(d_model)?](#1-why-multiply-by-sqrtd_model)
-2. [How PyTorch’s nn.Embedding works and what are (num_embeddings, embedding_dim)?](#2-how-pytorchs-nnembedding-works-and-what-are-num_embeddings-embedding_dim)
-3. [Is embedding and Byte Pair Encoding (BPE) related?](#3-is-embedding-and-byte-pair-encodingbpe-related-give-example)
+2. [How Batch Size Works in Embeddings](#2-how-batch-size-works-in-embeddings)
+3. [How PyTorch’s nn.Embedding works and what are (num_embeddings, embedding_dim)?](#3-how-pytorchs-nnembedding-works-and-what-are-num_embeddings-embedding_dim)
+4. [Is embedding and Byte Pair Encoding (BPE) related?](#4-is-embedding-and-byte-pair-encodingbpe-related-give-example)
 
 
 # 1. Why multiply by sqrt(d_model)?
@@ -17,7 +18,102 @@ The primary reason for scaling the embedding weights by $\sqrt{d_{model}}$ is to
 
 2. **Balancing Contributions:** By multiplying the embeddings by $\sqrt{d_{model}}$, their values become larger and more comparable to the scale of the positional encodings. This allows the model to effectively combine and utilize both the word's meaning (from the embedding) and its position in the sequence (from the encoding) when they are summed together. 
 
-# 2. How `PyTorch`'s `nn.Embedding` works and what are `(num_embeddings, embedding_dim)`?
+---
+
+# 2. How Batch Size Works in Embeddings
+
+## Input Shape
+```python
+x: (batch_size, seq_len)
+```
+
+Example:
+```python
+# 2 sentences, each with 4 tokens
+x = torch.tensor([
+    [5, 12, 3, 8],    # Sentence 1
+    [7, 2, 15, 9]     # Sentence 2
+])
+# Shape: (2, 4) → (batch_size=2, seq_len=4)
+```
+
+---
+
+## What `nn.Embedding` Does
+
+`nn.Embedding` **automatically processes batches**:
+
+```python
+self.embeddings = nn.Embedding(vocab_size=1000, d_model=512)
+
+# Input:  (batch_size, seq_len) = (2, 4)
+# Output: (batch_size, seq_len, d_model) = (2, 4, 512)
+```
+
+**How it works internally:**
+1. Takes each token ID in the input
+2. Looks up its embedding vector from the embedding table
+3. **Preserves the batch and sequence dimensions**
+
+---
+
+## Step-by-Step Example
+
+```python
+# Setup
+embeddings = Embeddings(vocab_size=1000, d_model=512)
+
+# Input: 2 sentences, 4 tokens each
+x = torch.tensor([
+    [5, 12, 3, 8],     # batch item 0
+    [7, 2, 15, 9]      # batch item 1
+])
+
+print(x.shape)  # torch.Size([2, 4])
+
+# Forward pass
+output = embeddings(x)
+
+print(output.shape)  # torch.Size([2, 4, 512])
+```
+
+---
+
+## Visual Breakdown
+
+```
+Input x: (2, 4)
+┌──────────────┐
+│  5  12  3  8 │  ← Batch item 0
+│  7   2 15  9 │  ← Batch item 1
+└──────────────┘
+
+         ↓  nn.Embedding lookup
+
+Output: (2, 4, 512)
+┌─────────────────────────────────────┐
+│ [emb_5]  [emb_12] [emb_3]  [emb_8]  │  ← Batch 0
+│ [emb_7]  [emb_2]  [emb_15] [emb_9]  │  ← Batch 1
+└─────────────────────────────────────┘
+       ↑
+  Each embedding is a 512-dim vector
+```
+
+---
+
+## Key Takeaway
+
+**You don't manually add the batch dimension!** 
+
+PyTorch's `nn.Embedding` is **vectorized** and automatically handles:
+- Single examples: `(seq_len,)` → `(seq_len, d_model)`
+- Batched examples: `(batch_size, seq_len)` → `(batch_size, seq_len, d_model)`
+
+The scaling operation `* math.sqrt(self.d_model)` is **broadcast** across all dimensions, so it works for any input shape.
+
+---
+
+# 3. How `PyTorch`'s `nn.Embedding` works and what are `(num_embeddings, embedding_dim)`?
 
 Yep, let’s make that **very concrete with words** 👌
 Think of `(num_embeddings, embedding_dim)` as **(vocabulary size, vector size)**.
@@ -148,7 +244,7 @@ This is what people mean by *“words live in a vector space”*.
 * Each **column** = learned feature
 * `nn.Embedding` = smart, trainable dictionary
 
-# 3. Is `embedding` and `Byte Pair Encoding(BPE)` related? Give example.
+# 4. Is `embedding` and `Byte Pair Encoding(BPE)` related? Give example.
 
 Yes, **BPE decides how text is split into tokens, and embeddings decide how those tokens are represented as vectors.**
 

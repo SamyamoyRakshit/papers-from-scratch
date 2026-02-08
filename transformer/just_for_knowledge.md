@@ -142,7 +142,7 @@ Cool, let’s do this **step-by-step with a real, simple example**—no theory f
 
 ---
 
-## Problem we want to solve
+#### Problem we want to solve
 
 > *“I want to see the output of a hidden layer, but I don’t want to change the model’s `forward()`.”*
 
@@ -150,7 +150,7 @@ This is **exactly** why hooks exist.
 
 ---
 
-## Example model
+#### Example model
 
 ```python
 import torch
@@ -174,15 +174,15 @@ model = Net()
 
 ---
 
-## Without hooks (bad / invasive)
+#### Without hooks (bad / invasive)
 
 You’d have to modify `forward()` just to print or save values ❌.
 
 ---
 
-## With a **forward hook** (clean way)
+#### With a **forward hook** (clean way)
 
-### Step 1: Define a hook function
+#### Step 1: Define a hook function
 
 ```python
 def save_activation(module, input, output):
@@ -192,7 +192,7 @@ def save_activation(module, input, output):
 
 ---
 
-### Step 2: Register the hook
+#### Step 2: Register the hook
 
 ```python
 handle = model.fc1.register_forward_hook(save_activation)
@@ -202,14 +202,14 @@ Now the hook is **attached** to `fc1`.
 
 ---
 
-### Step 3: Run the model
+#### Step 3: Run the model
 
 ```python
 x = torch.randn(1, 4)
 y = model(x)
 ```
 
-### What happens internally
+#### What happens internally
 
 ```text
 model(x)
@@ -232,7 +232,7 @@ Activation: tensor([[ 0.21, -0.48, 0.77]], grad_fn=<AddmmBackward>)
 
 ---
 
-## What just happened?
+#### What just happened?
 
 * You **did not touch** `forward()`
 * PyTorch **called your hook automatically**
@@ -242,9 +242,9 @@ That’s the power of hooks.
 
 ---
 
-## Real-world use case
+#### Real-world use case
 
-### Feature extraction
+#### Feature extraction
 
 ```python
 features = {}
@@ -266,7 +266,7 @@ Used in:
 
 ---
 
-## Cleaning up (important ⚠️)
+#### Cleaning up (important ⚠️)
 
 Hooks stay active unless removed.
 
@@ -278,20 +278,20 @@ Always do this.
 
 ---
 
-## One-line mental model
+#### One-line mental model
 
 **A hook is a function that PyTorch calls for you when data passes through a layer.**
 
 ---
 
-### More Information about `hooks`:
+### **More Information about `hooks`:**
 Hooks in PyTorch are **callbacks** that let you **intercept a model while it’s running** — without changing the model code.
 
 Think of them as *listeners* you attach to a layer or model.
 
 ---
 
-## Why hooks exist (intuition)
+#### Why hooks exist (intuition)
 
 You may want to:
 
@@ -304,9 +304,9 @@ Hooks let you do this **from the outside**.
 
 ---
 
-### Types of hooks (the important ones)
+#### Types of hooks (the important ones)
 
-### 1️⃣ Forward hook
+#### 1️⃣ Forward hook
 
 Runs **after** a layer’s `forward()`.
 
@@ -323,7 +323,7 @@ Used for: activations, debugging shapes.
 
 ---
 
-### 2️⃣ Forward *pre*-hook
+#### 2️⃣ Forward *pre*-hook
 
 Runs **before** `forward()`.
 
@@ -338,7 +338,7 @@ Used for: inspecting or modifying inputs.
 
 ---
 
-### 3️⃣ Backward hook
+#### 3️⃣ Backward hook
 
 Runs during **backpropagation**.
 
@@ -353,7 +353,7 @@ Used for: gradient analysis, debugging vanishing/exploding grads.
 
 ---
 
-## Tiny end-to-end example
+#### Tiny end-to-end example
 
 ```python
 import torch
@@ -382,7 +382,7 @@ y = net(x)
 
 ---
 
-## Where hooks sit in execution
+#### Where hooks sit in execution
 
 ```text
 model(x)
@@ -402,7 +402,7 @@ Backward hooks trigger during `.backward()`.
 
 ---
 
-## Why hooks are powerful (and dangerous ⚠️)
+#### Why hooks are powerful (and dangerous ⚠️)
 
 ✅ Powerful:
 
@@ -425,7 +425,7 @@ handle.remove()
 
 ---
 
-## One-line summary
+#### One-line summary
 
 **Hooks are functions that let you watch or modify what flows through a PyTorch model during forward or backward passes.**
 
