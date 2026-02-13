@@ -854,7 +854,7 @@ Direct power ops often introduce **precision loss** for fractional exponents.
 
 Every deep-learning library internally prefers:
 
-$$\Large a^b = e^{b \, \ln \, a}$$
+$$\Large a^b = e^{b \ \ln \ a}$$
 
 We apply the same logic:\
 **here, `log` means `ln`.*
