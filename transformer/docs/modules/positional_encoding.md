@@ -863,7 +863,7 @@ We use same logic here:
 
 <img src="./img/log_logic_pe.png" alt="Positional Encoding Log logic" />
 
-*Source: [Positional Encoding](https://medium.com/@hunter-j-phillips/positional-encoding-7a93db4109e6)*
+*Source: [Medium Blog](https://medium.com/@hunter-j-phillips/positional-encoding-7a93db4109e6)*
 
 *here, `log` means `ln`.*
 
