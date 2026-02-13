@@ -865,9 +865,9 @@ We use same logic here:
 
 *Source: [Medium Blog](https://medium.com/@hunter-j-phillips/positional-encoding-7a93db4109e6)*
 
-*here, `log` means `ln`.*
-
 </div>
+
+**here, `log` means `ln`.*
 
 because:
 
