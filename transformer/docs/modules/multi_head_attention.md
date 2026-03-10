@@ -23,8 +23,10 @@
 # References:
 
 1. [Attention Is All You Need (Paper)](https://arxiv.org/abs/1706.03762) — Section 3.2
-2. [The Illustrated Transformer](https://jalammar.github.io/illustrated-transformer/)
-3. [Visualizing A Neural Machine Translation Model](https://jalammar.github.io/visualizing-neural-machine-translation-mechanics-of-seq2seq-models-with-attention/)
+2. [What is Multi-head Attention in Transformers - CampusX](https://www.youtube.com/watch?v=bX2QwpjsmuA&list=PLKnIA16_RmvYuZauWaPlRTC54KxSNLtNn&index=77)
+3. [The Illustrated Transformer](https://jalammar.github.io/illustrated-transformer/)
+4. [Visualizing A Neural Machine Translation Model](https://jalammar.github.io/visualizing-neural-machine-translation-mechanics-of-seq2seq-models-with-attention/)
+5. [PyTorch's official GitHub implementation of Multi-head Attention](https://github.com/pytorch/pytorch/blob/v2.10.0/torch/nn/modules/activation.py#L1088)
 
 ---
 
@@ -1014,7 +1016,7 @@ We use `contiguous().view()` instead of `reshape` because it's **explicit** — 
 
 ## The Problem with `nn.Linear`'s Default Init
 
-When you create `nn.Linear(512, 512)`, PyTorch initializes the weight matrix using **Kaiming uniform** by default. Kaiming was designed for layers followed by **ReLU** activations — it accounts for the fact that ReLU kills ~50% of values (all negatives become zero), so it makes weights ~√2 larger to compensate.
+When you create `nn.Linear(512, 512)`, PyTorch initializes the weight matrix using **Kaiming uniform a.k.a He uniform** by default. Kaiming was designed for layers followed by **ReLU** activations — it accounts for the fact that ReLU kills ~50% of values (all negatives become zero), so it makes weights ~√2 larger to compensate.
 
 But in Multi-Head Attention, the projection layers (`W_q`, `W_k`, `W_v`, `W_o`) are **not** followed by ReLU. They feed into dot products, softmax, and linear combinations. Using Kaiming here means the initial weights are slightly too large for our use case — the variance assumption doesn't match reality.
 
