@@ -88,10 +88,10 @@ class Encoder(nn.Module):
         super().__init__()
 
         # N identical encoder layers
-        self.layers = nn.ModuleList(
+        self.layers = nn.ModuleList([
             EncoderLayer(d_model, num_heads, d_ff, dropout)
             for _ in range(num_layers)
-        )
+        ])
 
     def forward(self, src: torch.Tensor, src_mask: torch.Tensor = None) -> torch.Tensor:
         """
