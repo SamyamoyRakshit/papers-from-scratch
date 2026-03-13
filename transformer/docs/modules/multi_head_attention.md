@@ -17,6 +17,7 @@
 15. [Xavier Initialization: Why and How](#xavier-initialization-why-and-how)
 16. [The `_` Prefix Convention: `_reset_parameters`](#the-_-prefix-convention-_reset_parameters)
 17. [`nn.init.zeros_` vs `nn.init.constant_` vs `torch.zeros`](#nninitzeros_-vs-nninitconstant_-vs-torchzeros)
+18. [Why `seq_len_q` Instead of `seq_len` in Output Shape?](#why-seq_len_q-instead-of-seq_len-in-output-shape)
 
 ---
 
@@ -291,6 +292,78 @@ Batch: ["I love AI", "Hi <PAD> <PAD>"]
 Sentence 1: [1, 1, 1]   ← all real tokens
 Sentence 2: [1, 0, 0]   ← only "Hi" is real, block pad columns
 ```
+
+### Mask Shapes: Why `(batch_size, 1, seq_len, seq_len)` or `(batch_size, 1, 1, seq_len)`?
+
+In `multi_head_attention.py`, the mask docstring says:
+
+```
+mask: shape (batch_size, 1, seq_len, seq_len) or (batch_size, 1, 1, seq_len)
+```
+
+Two different shapes for two different mask types.
+
+#### Why `1` for num_heads?
+
+The mask is **identical** for all heads — head 1, head 2, ..., head 8 all mask the same positions. So instead of storing 8 copies of the same mask, we store it once with `1` and let PyTorch **broadcast**:
+
+```
+Mask:   (batch_size, 1,         seq_len, seq_len)
+Scores: (batch_size, num_heads, seq_len, seq_len)
+                     ↑
+                     1 broadcasts to num_heads automatically
+```
+
+#### `(batch_size, 1, seq_len_q, seq_len_k)` — Causal mask
+
+Each query has a **different** future, so each row must be different:
+
+- Query at position 1: positions 2, 3, 4 are in my future — block them
+- Query at position 2: positions 3, 4 are in my future — block them
+- Query at position 3: only position 4 is in my future — block it
+
+```
+     pos1  pos2  pos3  pos4
+pos1  1     0     0     0      ← sees only 1 token
+pos2  1     1     0     0      ← sees 2 tokens
+pos3  1     1     1     0      ← sees 3 tokens
+pos4  1     1     1     1      ← sees all 4
+```
+
+```
+(batch_size,  1,         seq_len_q,        seq_len_k)
+ ↑            ↑          ↑                 ↑
+ each         broadcast  each query row    which KEYS
+ sentence     across     is DIFFERENT      to mask out
+ has its      all        (row 1 ≠ row 2)
+ own mask     heads
+```
+
+#### `(batch_size, 1, 1, seq_len_k)` — Padding mask
+
+"Is this key a `<PAD>`?" — the answer is the **same** no matter which query is asking. `<PAD>` at position 4 is `<PAD>` whether query 1 or query 3 asks. So one row works for all queries:
+
+```
+Sentence: ["I", "love", "cats", "<PAD>", "<PAD>"]
+
+         I     love  cats  <PAD>  <PAD>
+I        ✅    ✅    ✅     ❌     ❌     ← same mask row
+love     ✅    ✅    ✅     ❌     ❌     ← same mask row
+cats     ✅    ✅    ✅     ❌     ❌     ← same mask row
+```
+
+```
+(batch_size,  1,         1,         seq_len_k)
+ ↑            ↑          ↑          ↑
+ each         broadcast  broadcast  the one row:
+ sentence     across     across     [✅,✅,✅,❌,❌]
+ has its      all        all
+ own mask     heads      query rows
+```
+
+#### Key Takeaway
+
+Both masks control **which keys** each query can attend to. The difference is whether the blocking rule **changes per query position** (causal — needs full matrix) or **stays the same** (padding — one row is enough).
 
 ### Can a Row Be Fully Masked? (NaN Risk from `masked_fill`)
 
@@ -1169,3 +1242,26 @@ self.W_q.bias = torch.zeros(512)
 
 **Rule of thumb:** When initializing weights/biases of `nn.Module` layers, always use `nn.init.*` functions. They modify values in-place without breaking the parameter system.
 
+---
+
+# Why `seq_len_q` Instead of `seq_len` in Output Shape?
+
+In `multi_head_attention.py`, the `combine_heads` and `W_o` output shape comments say `(batch_size, seq_len_q, d_model)` — not just `seq_len`. Why?
+
+`MultiHeadAttention` is used for **both** self-attention and cross-attention:
+
+```python
+# Self-attention (encoder): Q, K, V all from same source
+self.self_attn(src, src, src, mask)
+# seq_len_q == seq_len_k == seq_len → could just say "seq_len"
+
+# Cross-attention: decoder queries encoder
+self.cross_attn(decoder_out, encoder_out, encoder_out, mask)
+#                query        key           value
+#                seq_len_q    seq_len_k     seq_len_k
+#                (e.g., 20)   (e.g., 100)   (e.g., 100)
+```
+
+The output always follows the **query's** sequence length — each query position produces one output. In cross-attention, query and key have different lengths, so writing just `seq_len` would be misleading.
+
+`seq_len_q` is the general, correct shape that works for both cases.

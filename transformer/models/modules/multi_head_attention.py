@@ -47,7 +47,7 @@ class MultiHeadAttention(nn.Module):
         self.W_o = nn.Linear(d_model, d_model)
 
         self.dropout = nn.Dropout(dropout)
-        
+
         self._reset_parameters()
     
     def _reset_parameters(self):
@@ -141,6 +141,7 @@ class MultiHeadAttention(nn.Module):
         # Reshape: (batch_size, seq_len, num_heads, d_k) → (batch_size, seq_len, d_model)
         return x.contiguous().view(batch_size, seq_len, self.d_model)
     
+    # '|' means 'or' — returns either one tensor or a tuple of two tensors, depending on return_attention_weights flag.
     def forward(
             self,
             query: torch.Tensor,

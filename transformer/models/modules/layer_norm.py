@@ -13,7 +13,8 @@ class LayerNorm(nn.Module):
     
     Args:
         d_model: The dimension of the model (feature dimension)
-        eps: Small constant for numerical stability (default: 1e-6; for TensorFlow)
+        eps: Small constant for numerical stability (for TensorFlow default is: 1e-6; 
+            for PyTorch default is: 1e-5)
     """
     def __init__(self, d_model: int, eps: float = 1e-5): # took eps from pytorch default
         super().__init__()
