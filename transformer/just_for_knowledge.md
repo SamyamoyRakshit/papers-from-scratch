@@ -2,6 +2,7 @@
 1. [`nn.Parameter`](#1-nnparameter)
 2. [How the `forward` function in PyTorch returns `class` value when we do not call `forward`?](#2-how-the-forward-function-in-pytorch-returns-class-value-when-we-do-not-call-forward)
 3. [`hooks`](#3-hooks)
+4. [`torch.tensor` vs `torch.Tensor`](#4-torchtensor-vs-torchtensor)
 
 
 ## 1. `nn.Parameter`: 
@@ -428,5 +429,58 @@ handle.remove()
 #### One-line summary
 
 **Hooks are functions that let you watch or modify what flows through a PyTorch model during forward or backward passes.**
+
+___
+
+## 4. `torch.tensor` vs `torch.Tensor`
+
+These look almost identical but serve completely different purposes.
+
+### `torch.tensor` — a **function** (lowercase t)
+
+Creates a new tensor from data:
+
+```python
+x = torch.tensor([1, 2, 3])        # creates tensor from a list
+y = torch.tensor(5.0)               # creates a scalar tensor
+z = torch.tensor([[1, 2], [3, 4]])  # creates a 2D tensor
+```
+
+### `torch.Tensor` — a **class** (capital T)
+
+The type of all tensors in PyTorch. Used for type hints and `isinstance` checks:
+
+```python
+# Type hint in function signatures
+def forward(self, src: torch.Tensor) -> torch.Tensor:
+    ...
+
+# Type checking
+x = torch.tensor([1, 2, 3])
+print(isinstance(x, torch.Tensor))  # True
+print(type(x))                       # <class 'torch.Tensor'>
+```
+
+### Common mistake
+
+```python
+# ❌ WRONG — torch.tensor is a function, not a type
+def forward(self, src: torch.tensor) -> torch.tensor:
+
+# ✅ CORRECT — torch.Tensor is the class/type
+def forward(self, src: torch.Tensor) -> torch.Tensor:
+```
+
+### Quick reference
+
+| | `torch.tensor` | `torch.Tensor` |
+|---|---|---|
+| What | Function | Class |
+| Purpose | Create a tensor from data | Type annotation, isinstance checks |
+| Example | `x = torch.tensor([1,2,3])` | `def forward(self, x: torch.Tensor)` |
+
+### One-line summary
+
+**`torch.tensor` makes tensors. `torch.Tensor` describes them.**
 
 ___
