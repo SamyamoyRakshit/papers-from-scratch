@@ -12,9 +12,10 @@
    - [Why we use `log` here](#why-we-use-log-here)
    - [Example of how `log` works](#example-of-how-log-works)
 5. [Where `self.pe` came from?](#where-selfpe-line-no-70-came-from)
-6. [We Don't Train Positional Encoding in the Original Transformer](#we-dont-train-positional-encoding-in-the-original-transformer)
-7. [Does the Paper Mention Dropout for (Embedding + PE)?](#does-the-paper-mention-dropout-for-embedding--pe)
-8. [Just to learn for better code understanding](#just-to-learn-for-better-code-understanding)
+6. [`register_buffer` vs `self.pe` — Why Not Just Use `self.`?](#register_buffer-vs-selfpe--why-not-just-use-self)
+7. [We Don't Train Positional Encoding in the Original Transformer](#we-dont-train-positional-encoding-in-the-original-transformer)
+8. [Does the Paper Mention Dropout for (Embedding + PE)?](#does-the-paper-mention-dropout-for-embedding--pe)
+9. [Just to learn for better code understanding](#just-to-learn-for-better-code-understanding)
 
 ---
 
@@ -1079,6 +1080,107 @@ forward:
 ## Key Takeaway
 
 **`register_buffer('pe', pe)` creates `self.pe`** — it's just a special way to register a tensor as a non-trainable part of the model!
+
+
+# `register_buffer` vs `self.pe` — Why Not Just Use `self.`?
+
+Yes, `register_buffer` is necessary. Here's what breaks if you use plain `self.pe` instead.
+
+---
+
+## `register_buffer('pe', pe)` vs `self.pe = pe`
+
+**Three things `register_buffer` gives you that `self.pe` doesn't:**
+
+### 1. Automatic Device Movement
+
+```python
+model = model.to('cuda')
+```
+
+- `register_buffer`: `self.pe` moves to GPU automatically
+- `self.pe`: stays on CPU → crash when you try `embedding + self.pe` (tensor on GPU + tensor on CPU)
+
+### 2. Saved in `state_dict`
+
+```python
+torch.save(model.state_dict(), 'model.pth')
+```
+
+- `register_buffer`: `pe` is included → when you load the checkpoint, PE is restored
+- `self.pe`: not saved → you'd need to recompute it after loading
+
+### 3. Not a Parameter (no gradients)
+
+Both `register_buffer` and `self.pe` won't be updated by the optimizer. But `nn.Parameter(pe)` would be — that's why we don't use `nn.Parameter` here. PE is fixed (precomputed sinusoids), not learned.
+
+---
+
+## The Real Danger
+
+```python
+# This WILL crash at training time
+self.pe = torch.zeros(max_len, 1, d_model)  # lives on CPU
+
+# Later...
+model.to('cuda')
+x = some_embedding.to('cuda')  # GPU
+output = x + self.pe  # 💥 CPU + GPU = RuntimeError
+```
+
+With `register_buffer`, `self.pe` silently follows the model to whatever device you send it to.
+
+---
+
+## But Most Parameters Use `self.` — Why Not Here?
+
+Because the other `self.` assignments are **learnable weights** or **`nn.Module` subclasses** — PE is neither.
+
+```python
+# In MultiHeadAttention.__init__:
+self.W_q = nn.Linear(d_model, d_model)   # ← learnable (nn.Module, has parameters)
+self.dropout = nn.Dropout(dropout)         # ← nn.Module (no parameters, but has state like training mode)
+
+# In PositionalEncoding.__init__:
+self.register_buffer('pe', pe)             # ← fixed tensor, NOT a module or parameter
+```
+
+Every `self.something` in your modules falls into one of three categories:
+
+| What you store | How you store it | Why |
+|---|---|---|
+| Learnable layers (`W_q`, `W_k`, `feed_forward`) | `self.x = nn.Linear(...)` | They're `nn.Module`s — PyTorch already tracks their parameters, handles `.to(device)`, saves in `state_dict` |
+| Learnable raw tensors (`gamma`, `beta` in LayerNorm) | `nn.Parameter(tensor)` | Tells PyTorch: "this is a trainable weight" |
+| Fixed tensors (PE) | `register_buffer('pe', pe)` | Tells PyTorch: "track this tensor but don't train it" |
+
+Plain `self.pe` is just a Python attribute — PyTorch doesn't know about it. It's like putting a suitcase in the trunk but not checking it in. When the plane (`.to('cuda')`) takes off, your suitcase stays at the airport.
+
+`nn.Linear`, `nn.Dropout`, `nn.Parameter` — they all inherit from `nn.Module` or are explicitly registered. PyTorch sees them. But a raw tensor assigned with `self.pe = tensor`? Invisible.
+
+---
+
+## Quick Comparison
+
+| | `self.pe = pe` | `register_buffer('pe', pe)` | `nn.Parameter(pe)` |
+|---|---|---|---|
+| `.to(device)` | No | Yes | Yes |
+| In `state_dict` | No | Yes | Yes |
+| In `parameters()` | No | No | Yes |
+| Optimizer updates it | No | No | Yes |
+
+---
+
+## One-Line Summary
+
+**`register_buffer` = "store this tensor with the model, move it with the model, but don't train it."**
+
+That's exactly what positional encoding needs — it's a fixed lookup table, not a learnable weight.
+
+### One-Line Rule
+
+**If it's a raw tensor (not an `nn.Module` or `nn.Parameter`), use `register_buffer` so PyTorch can see it.**
+
+---
 
 
 # We Don't Train `Positional Encoding` in the Original Transformer
