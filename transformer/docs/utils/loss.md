@@ -14,7 +14,7 @@
    - [Step 4 — Flatten Before Loss](#step-4--flatten-before-loss)
    - [Step 5 — Forward Through LabelSmoothedLoss](#step-5--forward-through-labelsmoothedloss)
 6. [The Smoothed Distribution — Why V-2](#the-smoothed-distribution--why-v-2)
-7. [PyTorch Alternative — `CrossEntropyLoss(label_smoothing=)`](#pytorch-alternative--crossentropyloss-label_smoothing)
+7. [PyTorch Alternative](#pytorch-alternative)
 8. [KL Divergence — Extra Computation Cost](#kl-divergence--extra-computation-cost)
 9. [The Full Picture](#the-full-picture)
 10. [References](#references)
@@ -79,7 +79,7 @@ The paper describes **cross-entropy with a smoothed target distribution**. The m
 loss = -Σ p(k) × log q(k)       ← this is cross-entropy
 ```
 
-But `nn.CrossEntropyLoss` before PyTorch 1.10 (2021) only accepted **integer targets** (token IDs like `[3, 4, 5]`), not soft distributions like `[0.0167, 0.0167, 0.9, ...]`. (PyTorch 1.10+ and 2.x now support `label_smoothing=` natively — see [Section 7](#pytorch-alternative--crossentropyloss-label_smoothing).)
+But `nn.CrossEntropyLoss` before PyTorch 1.10 (2021) only accepted **integer targets** (token IDs like `[3, 4, 5]`), not soft distributions like `[0.0167, 0.0167, 0.9, ...]`. (PyTorch 1.10+ and 2.x now support `label_smoothing=` natively — see [Section 7](#pytorch-alternative).)
 
 `nn.KLDivLoss` accepts **soft distributions**. And mathematically:
 
@@ -501,7 +501,7 @@ The missing probability is what **would have gone to `pad_idx`** but got zeroed 
 
 ---
 
-# PyTorch Alternative — `CrossEntropyLoss(label_smoothing=)`
+# PyTorch Alternative
 
 Since PyTorch 1.10 (2021), `nn.CrossEntropyLoss` supports label smoothing natively:
 
