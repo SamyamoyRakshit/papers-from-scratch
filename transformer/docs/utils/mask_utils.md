@@ -159,6 +159,20 @@ Token:    "I"    "love"   "AI"   "too"
 
 This is why it's called a **causal** mask — it enforces causality (can't peek at the future) in the decoder's self-attention.
 
+### What Does "Causal" Mean?
+
+**Causal** = relating to cause and effect — things happen in order, the past causes the future.
+
+In the decoder, a token at position `t` was **generated from** tokens at positions `0` to `t-1`. So it should only see the past, not the future. The lower-triangular mask enforces this natural cause → effect ordering:
+
+```
+Position 0 → generated first  (sees nothing before it)
+Position 1 → generated second (sees position 0)
+Position 2 → generated third  (sees positions 0, 1)
+```
+
+If position 2 could see position 3, it would be using the **effect** to predict the **cause** — that's anti-causal, and it's cheating.
+
 ---
 
 ## `create_src_mask`
