@@ -79,7 +79,7 @@ The paper describes **cross-entropy with a smoothed target distribution**. The m
 loss = -Σ p(k) × log q(k)       ← this is cross-entropy
 ```
 
-But `nn.CrossEntropyLoss` before PyTorch 1.10 (2021) only accepted **integer targets** (token IDs like `[3, 4, 5]`), not soft distributions like `[0.0167, 0.0167, 0.9, ...]`. (PyTorch 1.10+ and 2.x now support `label_smoothing=` natively — see [Section 7](#pytorch-alternative).)
+But `nn.CrossEntropyLoss` before PyTorch 1.10 (2021) only accepted **integer targets** (token IDs like `[3, 4, 5]`), not soft distributions like `[0.0167, 0.0167, 0.9, ...]`. (PyTorch 1.10+ and 2.x now support `label_smoothing=` natively — see [Section 7](#pytorch-alternative)).
 
 `nn.KLDivLoss` accepts **soft distributions**. And mathematically:
 
