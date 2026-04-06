@@ -1,4 +1,3 @@
-import torch
 import torch.nn as nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LambdaLR
@@ -51,6 +50,6 @@ def build_optimizer(model: nn.Module, d_model: int, warmup_steps: int = 4000) ->
         eps=1e-9
     )
 
-    schedular = LambdaLR(optimizer, lr_lambda=TransformerScheduler(d_model, warmup_steps))
+    scheduler = LambdaLR(optimizer, lr_lambda=TransformerScheduler(d_model, warmup_steps))
 
-    return optimizer, schedular
+    return optimizer, scheduler
