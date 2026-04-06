@@ -257,12 +257,20 @@ The model doesn't "know" it's আমি — it just outputs scores for all 8 voc
 
 ## Step 4 — Flatten Before Loss
 
-Flattening happens in the **training loop** (not inside the loss function):
+The loss function expects **already-flattened** inputs. Flattening is the caller's responsibility — it happens in the **training loop**, not inside the loss function. This will be implemented in `train_utils.py`:
 
 ```python
-logits = logits.view(-1, vocab_size)   # (2*4, 8) = (8, 8)
-target = target.view(-1)               # (8,)
+# In train_utils.py:
+logits = model(src, tgt)                 # (batch, seq_len, vocab_size)
+logits = logits.view(-1, vocab_size)     # (batch * seq_len, vocab_size)
+target = target.view(-1)                 # (batch * seq_len,)
 
+loss = criterion(logits, target)         # loss expects flattened inputs
+```
+
+For our example:
+
+```
 target = [3, 4, 5, 2, 3, 2, 0, 0]
           ↑              ↑        ↑  ↑
           real tokens     real   pad  pad

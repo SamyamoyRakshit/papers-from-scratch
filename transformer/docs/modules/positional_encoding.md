@@ -29,7 +29,7 @@
 4. [Info got from claude](https://claude.ai/share/18405f10-5310-43b4-b385-51f61a93b547)
 
 5. [Broadcasting](https://numpy.org/doc/stable/user/basics.broadcasting.html)
-![broadcasting image from NumPy official doc](./img/broadcasting_numpy.png)
+![broadcasting image from NumPy official doc](./img/positional_encoding/broadcasting_numpy.png)
 
 # Code Explanation with Example:
 
@@ -861,7 +861,7 @@ We apply the same logic:\
 **here, `log` means `ln`.*
 <div align="center">
 
-<img src="./img/log_logic_pe.png" alt="Positional Encoding Log logic" />
+<img src="./img/positional_encoding/log_logic_pe.png" alt="Positional Encoding Log logic" />
 
 *Source: [Medium Blog](https://medium.com/@hunter-j-phillips/positional-encoding-7a93db4109e6)*
 
