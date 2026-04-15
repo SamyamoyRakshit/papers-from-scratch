@@ -15,7 +15,8 @@
 6. [`register_buffer` vs `self.pe` — Why Not Just Use `self.`?](#register_buffer-vs-selfpe--why-not-just-use-self)
 7. [We Don't Train Positional Encoding in the Original Transformer](#we-dont-train-positional-encoding-in-the-original-transformer)
 8. [Does the Paper Mention Dropout for (Embedding + PE)?](#does-the-paper-mention-dropout-for-embedding--pe)
-9. [Just to learn for better code understanding](#just-to-learn-for-better-code-understanding)
+9. [Why `max_len` Exists (and Why It's 5000)](#why-max_len-exists-and-why-its-5000)
+10. [Just to learn for better code understanding](#just-to-learn-for-better-code-understanding)
 
 ---
 
@@ -1272,6 +1273,55 @@ It's like giving the model a ruler — you don't need to train the ruler, just t
 > "We apply dropout to the output of each sub-layer, before it is added to the sub-layer input and normalized. **In addition, we apply dropout to the sums of the embeddings and the positional encodings** in both the encoder and decoder stacks. For the base model, we use a rate of **$P_{drop} = 0.1$**"
 
 So `dropout` **is explicitly mentioned** for positional encodings! And its value is `0.1` for the `base model` of the `transformer`.
+
+---
+
+# Why `max_len` Exists (and Why It's 5000)
+
+## What `max_len` Does
+
+`max_len` controls how many positions the PE table pre-computes:
+
+```python
+pe = torch.zeros(max_len, d_model)  # shape: (5000, 256)
+```
+
+This creates a lookup table with one row per position (0 to 4999). During `forward()`, we slice only the positions we need:
+
+```python
+x = x + self.pe[:, :x.size(1)]  # if seq_len=128, uses rows 0–127
+```
+
+## `max_len` vs `max_seq_len` — Two Different Things
+
+| Config Key | Value | Purpose |
+|---|---|---|
+| `model.max_len` | 5000 | PE table size — how many positions are pre-computed |
+| `training.max_seq_len` | 128 | Actual max sequence length — input is truncated to this |
+
+`max_seq_len` (128) controls what we actually use. `max_len` (5000) controls what PE is prepared for.
+
+## Why 5000?
+
+The paper doesn't specify this value. We set it large (5000) as a generous safety margin so:
+
+- If you increase `max_seq_len` later (e.g. 128 → 512 → 1024), the PE table already covers it — no model rebuild needed
+- The cost is tiny — a `(5000, 256)` float tensor is only ~5MB
+
+## What If a Sequence Exceeds `max_len`?
+
+If a sequence of length 6000 comes in and `max_len=5000`, it crashes with an **IndexError** — there's no row 5000+ in the table.
+
+**Fix:** increase `max_len` in the config and rebuild the model.
+
+This will never happen in practice because `max_seq_len` (128) truncates all sequences long before they reach 5000. As long as `max_len > max_seq_len`, you're safe.
+
+## Why Embeddings Don't Need `max_len`
+
+- **Embeddings** map **token IDs** → vectors. The table size is `vocab_size` (e.g. 16000). Token ID 15999 is always valid regardless of where it appears in the sequence. Embeddings don't care about *position*.
+- **PE** maps **positions** → vectors. Position 0, 1, ... N. It must know the maximum possible position in advance.
+
+Embeddings care about *what* the token is. PE cares about *where* the token is. "Where" requires a pre-defined limit.
 
 ---
 

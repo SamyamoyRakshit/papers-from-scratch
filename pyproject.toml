@@ -72,6 +72,10 @@ dependencies = [
     "urllib3==2.5.0",
     "wcwidth==0.2.14",
     "widgetsnbextension==4.0.14",
+    "sentencepiece>=0.2.0",
+    "datasets>=2.14.0",
+    "sacrebleu>=2.4.0",
+    "pyyaml>=6.0",
 ]
 readme = { file = "README.md", content-type = "text/markdown" }
 

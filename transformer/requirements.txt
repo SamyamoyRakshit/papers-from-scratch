@@ -10,8 +10,8 @@ tqdm==4.67.1
 matplotlib==3.10.3
 
 # Data Loading & Tokenization (transformer-specific)
-datasets>=2.14.0           # HuggingFace datasets (for ai4bharat/wiki-translate)
-tokenizers>=0.15.0         # Fast BPE tokenizer
+datasets>=2.14.0           # HuggingFace datasets (for ai4bharat/samanantar)
+sentencepiece>=0.2.0       # SentencePiece tokenizer — implements BPE (Section 5.1)
 
 # Evaluation
 sacrebleu>=2.4.0           # BLEU score (standard for NMT)
