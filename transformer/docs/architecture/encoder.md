@@ -1,12 +1,50 @@
 ## Table of Contents
 
 1. [Relative Imports and `__init__.py`](#relative-imports-and-__init__py)
+   - [The Three Import Styles](#the-three-import-styles)
+   - [How `.` Works in Relative Imports](#how--works-in-relative-imports)
+   - [Why `__init__.py` is Required](#why-__init__py-is-required)
+   - [The Caveat: Can't Run Files Directly](#the-caveat-cant-run-files-directly)
+   - [Will This Break Existing Code?](#will-this-break-existing-code)
 2. [Why `self.self_attn(src, src, src)` — Self-Attention Explained](#why-selfself_attnsrc-src-src--self-attention-explained)
+   - [The Confusing Line](#the-confusing-line)
+   - [`__init__` and `forward` Are Different Calls](#__init__-and-forward-are-different-calls)
+   - [Why Q = K = V = `src`?](#why-q--k--v--src)
+   - [Self-Attention vs Cross-Attention](#self-attention-vs-cross-attention)
+   - [Who Says Q, K, V Dimensions Must Match?](#who-says-q-k-v-dimensions-must-match)
 3. [`__init__` vs `forward` — Building the Machine vs Running It](#__init__-vs-forward--building-the-machine-vs-running-it)
-4. [Where Does Dropout Go? — Sub-layer Output, Not LayerNorm Output](#where-does-dropout-go--sub-layer-output-not-layernorm-output)
-5. [`nn.ModuleList` — N Layers, Each With Own Weights](#nnmodulelist--n-layers-each-with-own-weights)
-6. [`nn.ModuleList` vs `nn.Sequential` — Stacking Layers](#nnmodulelist-vs-nnsequential--stacking-layers)
-7. [Why No Final LayerNorm? — Staying Faithful to the Paper](#why-no-final-layernorm--staying-faithful-to-the-paper)
+   - [The Core Idea](#the-core-idea)
+   - [Why Can't We Pass Data in `__init__`?](#why-cant-we-pass-data-in-__init__)
+   - [Data Arrives in `forward`](#data-arrives-in-forward)
+   - [The Factory Analogy](#the-factory-analogy)
+   - [The Full Lifecycle](#the-full-lifecycle)
+4. [End-to-End Mathematical Trace — One EncoderLayer](#end-to-end-mathematical-trace--one-encoderlayer)
+   - [Sub-layer 1: Multi-Head Self-Attention](#sub-layer-1-multi-head-self-attention)
+   - [Sub-layer 2: Feed-Forward Network](#sub-layer-2-feed-forward-network)
+   - [Output — One EncoderLayer Done](#output--one-encoderlayer-done)
+   - [Full Encoder Stack — 4 Layers](#full-encoder-stack--4-layers)
+5. [What Is Dropout? — Regularization by Random Zeroing](#what-is-dropout--regularization-by-random-zeroing)
+   - [The Problem — Overfitting](#the-problem--overfitting)
+   - [How Dropout Works](#how-dropout-works)
+   - [`model.train()` vs `model.eval()` — The Mode Switch](#modeltrain-vs-modeleval--the-mode-switch)
+   - [Where Dropout Is Used in Our Code](#where-dropout-is-used-in-our-code)
+   - [Why 0.1 and Not Higher?](#why-01-and-not-higher)
+6. [Where Does Dropout Go? — Sub-layer Output, Not LayerNorm Output](#where-does-dropout-go--sub-layer-output-not-layernorm-output)
+   - [The Paper's Formula (Section 5.4)](#the-papers-formula-section-54)
+   - [All Three Dropout Locations in the Paper (Section 5.4)](#all-three-dropout-locations-in-the-paper-section-54)
+   - [Why Not After LayerNorm?](#why-not-after-layernorm)
+7. [`nn.ModuleList` — N Layers, Each With Own Weights](#nnmodulelist--n-layers-each-with-own-weights)
+   - [What This Code Does](#what-this-code-does)
+   - [What Happens Inside Each `EncoderLayer(...)` Call](#what-happens-inside-each-encoderlayer-call)
+   - [Data Flows Through Layers Sequentially](#data-flows-through-layers-sequentially)
+8. [`nn.ModuleList` vs `nn.Sequential` — Stacking Layers](#nnmodulelist-vs-nnsequential--stacking-layers)
+   - [`nn.Sequential` — stack + return (from `ViT/ViT.ipynb`)](#nnsequential--stack--return-from-vitvitipynb)
+   - [`nn.ModuleList` — stack only (from `transformer/models/encoder.py`)](#nnmodulelist--stack-only-from-transformermodelsencoderpy)
+   - [Why the Difference?](#why-the-difference)
+9. [Why No Final LayerNorm? — Staying Faithful to the Paper](#why-no-final-layernorm--staying-faithful-to-the-paper)
+   - [What PyTorch Does](#what-pytorch-does)
+   - [Why PyTorch Has It](#why-pytorch-has-it)
+   - [Why We Don't Use It](#why-we-dont-use-it)
 
 ---
 
@@ -235,6 +273,306 @@ for batch in dataloader:
 ```
 
 Every call to `encoder_layer(src, mask)` gets **different** `src` (different batches, different training steps), but uses the **same** weights — which the optimizer gradually improves.
+
+---
+
+# End-to-End Mathematical Trace — One EncoderLayer
+
+Trace a single input through one `EncoderLayer`, showing every operation and shape change. Uses our config values: `d_model=256`, `num_heads=8`, `d_k=32`, `d_ff=1024`.
+
+## Input
+
+```
+src: (batch=1, seq_len=3, d_model=256)    ← 3 tokens after embedding + PE
+     ["I", "love", "AI"] — each is a 256-dim vector
+
+src_mask: (1, 1, 1, 3) = [1, 1, 1]       ← no padding in this example
+```
+
+## Sub-layer 1: Multi-Head Self-Attention
+
+### Step 1 — Linear projections (Q, K, V)
+
+```python
+Q = self.W_q(src)     # src @ W_q^T + b_q
+K = self.W_k(src)     # src @ W_k^T + b_k
+V = self.W_v(src)     # src @ W_v^T + b_v
+```
+
+```
+src:  (1, 3, 256)
+W_q:  (256, 256)     ← nn.Linear weight matrix
+
+Q = src @ W_q^T + b_q
+    (1, 3, 256) @ (256, 256) = (1, 3, 256)
+
+Same for K and V → all three are (1, 3, 256)
+```
+
+### Step 2 — Split into 8 heads
+
+```python
+Q = self.split_heads(Q)    # view + transpose
+```
+
+```
+Q: (1, 3, 256) → view → (1, 3, 8, 32) → transpose(1,2) → (1, 8, 3, 32)
+                          ↑ seq  heads d_k                   ↑ heads seq d_k
+
+Same for K, V → all three are (1, 8, 3, 32)
+```
+
+Each head gets its own 32-dim slice. Head 0 sees Q[:, 0, :, :] = (1, 3, 32).
+
+### Step 3 — Scaled dot-product attention (per head)
+
+```python
+scores = Q @ K^T / sqrt(d_k)
+```
+
+```
+Q @ K^T:
+(1, 8, 3, 32) @ (1, 8, 32, 3) = (1, 8, 3, 3)
+                                        ↑ query × key
+
+/ sqrt(32) = / 5.66
+
+scores: (1, 8, 3, 3)    ← 8 heads, each with a 3×3 attention grid
+```
+
+One head's 3×3 score matrix (before softmax):
+
+```
+            key: "I"   "love"  "AI"
+query "I":     [ 1.2    0.8    0.3 ]
+query "love":  [ 0.5    1.5    0.9 ]
+query "AI":    [ 0.2    0.7    1.8 ]
+```
+
+### Step 4 — Mask + Softmax
+
+```python
+scores = scores.masked_fill(mask == 0, float('-inf'))    # no pads → no change
+attention_weights = softmax(scores, dim=-1)               # each ROW sums to 1
+```
+
+```
+            key: "I"   "love"  "AI"
+query "I":     [ 0.50   0.33   0.17 ]    ← "I" attends mostly to itself
+query "love":  [ 0.18   0.50   0.32 ]    ← "love" attends mostly to itself
+query "AI":    [ 0.08   0.27   0.65 ]    ← "AI" attends mostly to itself
+
+attention_weights: (1, 8, 3, 3)    ← each row sums to 1.0
+```
+
+### Step 5 — Weighted sum of values
+
+```python
+attn_output = attention_weights @ V
+```
+
+```
+(1, 8, 3, 3) @ (1, 8, 3, 32) = (1, 8, 3, 32)
+        ↑ weights    ↑ values         ↑ weighted sum per query
+
+For query "I":
+output_I = 0.50 × V("I") + 0.33 × V("love") + 0.17 × V("AI")
+         = 32-dim vector    ← context-aware representation of "I"
+```
+
+### Step 6 — Combine heads + output projection
+
+```python
+attn_output = self.combine_heads(attn_output)    # transpose + view
+output = self.W_o(attn_output)                    # final linear
+```
+
+```
+attn_output: (1, 8, 3, 32) → transpose(1,2) → (1, 3, 8, 32) → view → (1, 3, 256)
+                                                                         ↑ 8 × 32 = 256
+
+output = attn_output @ W_o^T + b_o
+         (1, 3, 256) @ (256, 256) = (1, 3, 256)
+```
+
+### Step 7 — Residual + LayerNorm
+
+```python
+src = self.norm1(src + self.dropout1(attn_output))
+```
+
+```
+dropout1(attn_output):    (1, 3, 256)    ← randomly zero ~10% of values
+src + dropout1(...):      (1, 3, 256)    ← residual: add original input back
+norm1(...):               (1, 3, 256)    ← per-position: x̂ = (x - μ) / √(σ² + ε)
+                                            then γ * x̂ + β (learned scale + shift)
+```
+
+**After sub-layer 1**: `src` is (1, 3, 256) — same shape, but each token now carries context from all other tokens.
+
+## Sub-layer 2: Feed-Forward Network
+
+### Step 8 — Expand to d_ff, ReLU, project back
+
+```python
+ff_output = self.feed_forward(src)
+```
+
+```python
+# Inside FeedForward.forward():
+x = self.linear1(src)      # (1, 3, 256) @ (256, 1024) = (1, 3, 1024)   ← expand
+x = self.relu(x)           # (1, 3, 1024)                                ← zero out negatives
+x = self.dropout(x)        # (1, 3, 1024)                                ← randomly zero ~10%
+x = self.linear2(x)        # (1, 3, 1024) @ (1024, 256) = (1, 3, 256)   ← compress back
+```
+
+Mathematically for each position independently:
+
+```
+FFN(x₀) = max(0, x₀ W₁ + b₁) W₂ + b₂
+
+x₀:           (256,)     ← one position's vector
+x₀ W₁ + b₁:  (1024,)    ← expand to 1024 dims
+ReLU:         (1024,)    ← zero out negative values
+× W₂ + b₂:   (256,)     ← compress back to 256 dims
+```
+
+"Position-wise" means: position 0 ("I"), position 1 ("love"), position 2 ("AI") each go through the **same** W₁, W₂ weights **independently**. No interaction between positions here — that already happened in self-attention.
+
+### Step 9 — Residual + LayerNorm (again)
+
+```python
+src = self.norm2(src + self.dropout2(ff_output))
+```
+
+```
+dropout2(ff_output):    (1, 3, 256)
+src + dropout2(...):    (1, 3, 256)    ← residual
+norm2(...):             (1, 3, 256)    ← LayerNorm
+```
+
+## Output — One EncoderLayer Done
+
+```
+Input:  src (1, 3, 256)    ← embeddings of ["I", "love", "AI"]
+Output: src (1, 3, 256)    ← context-aware representations
+
+Same shape in, same shape out. But the vectors are now enriched:
+- "I" knows about "love" and "AI" (via self-attention)
+- Each vector was non-linearly transformed (via FFN)
+- Both additions were normalized (via LayerNorm)
+```
+
+## Full Encoder Stack — 4 Layers
+
+```python
+# Encoder.forward()
+for layer in self.layers:       # 4 layers
+    src = layer(src, src_mask)
+```
+
+```
+src₀: (1, 3, 256)  ← input (embedding + PE)
+        ↓ EncoderLayer 0 (W_q₀, W_k₀, W_v₀, W_o₀, FFN₀, norm₀)
+src₁: (1, 3, 256)  ← layer 0 output → layer 1 input
+        ↓ EncoderLayer 1 (W_q₁, W_k₁, W_v₁, W_o₁, FFN₁, norm₁)
+src₂: (1, 3, 256)  ← layer 1 output → layer 2 input
+        ↓ EncoderLayer 2 (W_q₂, W_k₂, W_v₂, W_o₂, FFN₂, norm₂)
+src₃: (1, 3, 256)  ← layer 2 output → layer 3 input
+        ↓ EncoderLayer 3 (W_q₃, W_k₃, W_v₃, W_o₃, FFN₃, norm₃)
+encoder_output: (1, 3, 256)  ← final output → goes to decoder as K, V
+```
+
+Each layer has **its own weights** (subscript ₀, ₁, ₂, ₃). Same architecture, different learned parameters. The representation gets progressively more refined — early layers capture local patterns, later layers capture long-range dependencies.
+
+---
+
+# What Is Dropout? — Regularization by Random Zeroing
+
+## The Problem — Overfitting
+
+A model that memorizes the training data instead of learning general patterns. It performs great on training data, terrible on new data:
+
+```
+Training loss:    0.1  ← "I memorized everything!"
+Validation loss:  3.5  ← "I can't generalize to new sentences"
+```
+
+This happens when the model relies too heavily on a few specific neurons — they memorize patterns instead of learning useful features.
+
+## How Dropout Works
+
+During **training**, dropout randomly zeros ~10% of values (our config: `dropout=0.1`) at each step:
+
+```
+Input:  [0.5, 0.8, 0.3, 0.7, 0.2, 0.9, 0.4, 0.6, 0.1, 0.8]
+
+Step 1: [0.5, 0.0, 0.3, 0.7, 0.2, 0.9, 0.0, 0.6, 0.1, 0.8]
+              ↑                          ↑
+          killed                     killed
+
+Step 2: [0.5, 0.8, 0.0, 0.7, 0.2, 0.0, 0.4, 0.6, 0.1, 0.8]
+                    ↑              ↑
+                killed         killed
+```
+
+Different neurons are killed each step — randomly chosen. This forces the model to spread knowledge across many neurons. No single neuron can be relied on, because it might be zeroed next step.
+
+During **eval** (validation / inference), dropout is **OFF** — everything passes through unchanged:
+
+```
+Input:  [0.5, 0.8, 0.3, 0.7, 0.2, 0.9, 0.4, 0.6, 0.1, 0.8]
+Output: [0.5, 0.8, 0.3, 0.7, 0.2, 0.9, 0.4, 0.6, 0.1, 0.8]    ← no zeroing
+```
+
+Why? During eval you want the model's **full power** — consistent, deterministic predictions. If dropout stayed on, the same input could give different outputs each time.
+
+## `model.train()` vs `model.eval()` — The Mode Switch
+
+```python
+model.train()    # dropout ON  → for training (randomness helps generalization)
+model.eval()     # dropout OFF → for validation/inference (need consistent output)
+```
+
+These don't train or evaluate anything — they just flip a boolean flag (`model.training = True/False`). Dropout checks this flag internally:
+
+```python
+# Inside nn.Dropout.forward() (simplified):
+def forward(self, x):
+    if self.training:          # ← checks model.training flag
+        mask = random_mask()   # randomly zero ~10%
+        return x * mask
+    else:
+        return x               # pass through unchanged
+```
+
+## Where Dropout Is Used in Our Code
+
+```
+MultiHeadAttention  → self.dropout         (after softmax on attention weights)
+FeedForward         → self.dropout         (after ReLU)
+EncoderLayer        → self.dropout1        (after self-attention output)
+                    → self.dropout2        (after FFN output)
+DecoderLayer        → self.dropout1        (after masked self-attention output)
+                    → self.dropout2        (after cross-attention output)
+                    → self.dropout3        (after FFN output)
+PositionalEncoding  → self.dropout         (after embedding + PE sum)
+```
+
+All of these are `nn.Dropout(0.1)` — same dropout rate, matching Section 5.4.
+
+## Why 0.1 and Not Higher?
+
+The paper uses `dropout = 0.1` (Section 5.4). Common values:
+
+```
+0.0  = no dropout (no regularization)
+0.1  = mild dropout (paper's choice — model is large enough to need some)
+0.3  = moderate (used in smaller models that overfit more easily)
+0.5  = aggressive (50% of neurons killed — used in very old networks like AlexNet)
+```
+
+0.1 is mild because the Transformer is already well-regularized by other techniques (label smoothing, weight sharing, the architecture itself). Too much dropout would slow down learning.
 
 ---
 

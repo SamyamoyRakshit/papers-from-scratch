@@ -53,7 +53,7 @@ class LabelSmoothedLoss(nn.Module):
         Returns:
             torch.Tensor: Scalar loss, normalized by the number of non-padding tokens.
         """
-        vocab_size = logits.size(-1)
+        vocab_size = logits.size(-1)    # 16000 in our case (from vocab_size: 16000 in config).
 
         # log_softmax for KL divergence (KLDivLoss expects log-probabilities)
         log_probs = torch.log_softmax(logits, dim=-1)

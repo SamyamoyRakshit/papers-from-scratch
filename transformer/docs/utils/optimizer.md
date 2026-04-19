@@ -9,7 +9,11 @@
    - [`TransformerScheduler`](#transformerscheduler)
    - [`build_optimizer`](#build_optimizer)
 7. [How It Connects to the Training Loop](#how-it-connects-to-the-training-loop)
-8. [References](#references)
+8. [How Scheduler Updates Optimizer's Learning Rate](#how-scheduler-updates-optimizers-learning-rate)
+   - [What `param_groups` Is](#what-param_groups-is)
+   - [What Happens Inside `scheduler.step()`](#what-happens-inside-schedulerstep)
+   - [Why `lr=1.0` in Adam — The Placeholder Trick](#why-lr10-in-adam--the-placeholder-trick)
+9. [References](#references)
 
 ---
 
@@ -519,6 +523,129 @@ step 2: model weights = slightly better → loss = 7.2
 step 3: model weights = better still → loss = 5.8
         ...
 step N: model weights = trained → loss = 0.3
+```
+
+---
+
+# How Scheduler Updates Optimizer's Learning Rate
+
+A common question: "The scheduler computes a new LR each step — but how does the optimizer know about it?"
+
+Answer: the scheduler **directly overwrites** the optimizer's internal `lr` value. No return value, no message passing.
+
+## What `param_groups` Is
+
+Every PyTorch optimizer stores its config in a list called `param_groups`:
+
+```python
+optimizer = Adam(model.parameters(), lr=1.0, betas=(0.9, 0.98), eps=1e-9)
+
+optimizer.param_groups = [
+    {
+        'lr': 1.0,                    ← scheduler overwrites THIS
+        'betas': (0.9, 0.98),
+        'eps': 1e-9,
+        'params': [all model parameters (millions of tensors)]
+    }
+]
+```
+
+When `optimizer.step()` runs, it reads `param_group['lr']` to compute the weight update:
+
+```
+new_weight = old_weight - lr × gradient
+                          ↑
+                    reads from param_groups[0]['lr']
+```
+
+## What Happens Inside `scheduler.step()`
+
+Our scheduler is `LambdaLR` wrapping `TransformerScheduler`. When you call `scheduler.step()`, two things happen inside PyTorch's source code:
+
+**Step 1 — Compute new LR** (`LambdaLR.get_lr()` in `lr_scheduler.py` line 373):
+
+```python
+# Inside LambdaLR
+def get_lr(self):
+    return [
+        base_lr * lmbda(self.last_epoch)
+        #  1.0   × TransformerScheduler.__call__(step)
+        #  1.0   × d_model^(-0.5) × min(step^(-0.5), step × warmup^(-1.5))
+        #       = the paper's formula directly
+    ]
+```
+
+This calls our `TransformerScheduler.__call__(step)` — the formula from Section 5.3.
+
+**Step 2 — Write LR into optimizer** (`LRScheduler.step()` in `lr_scheduler.py` line 245):
+
+```python
+# Inside LRScheduler (parent class)
+def step(self):
+    values = self.get_lr()                    # ← calls LambdaLR.get_lr() above
+
+    for param_group, lr in zip(self.optimizer.param_groups, values):
+        param_group["lr"] = lr                # ← HERE! directly overwrites optimizer's lr
+```
+
+Line 245 is where the magic happens: `param_group["lr"] = lr`. The scheduler reaches into the optimizer's internal dict and replaces the LR value.
+
+**The full chain:**
+
+```
+scheduler.step()
+    → LRScheduler.step()
+        → LambdaLR.get_lr()
+            → TransformerScheduler.__call__(step)
+                → returns 0.000699 (at step 4000, for example)
+            → 1.0 × 0.000699 = 0.000699
+        → optimizer.param_groups[0]['lr'] = 0.000699    ← overwritten!
+    → next optimizer.step() uses lr = 0.000699
+```
+
+## Why `lr=1.0` in Adam — The Placeholder Trick
+
+```python
+optimizer = Adam(params=model.parameters(), lr=1.0, ...)
+#                                            ↑ placeholder
+```
+
+`LambdaLR` computes: `actual_lr = base_lr × lambda(step)`
+
+```
+actual_lr = 1.0 × TransformerScheduler(step)
+          = 1.0 × (whatever the paper's formula returns)
+          = whatever the paper's formula returns
+```
+
+With `base_lr = 1.0`, the multiplication is a no-op — the schedule **fully** controls LR. If we had set `lr=0.001` in Adam:
+
+```
+actual_lr = 0.001 × TransformerScheduler(step)
+          = 0.001 × 0.000699    ← at step 4000
+          = 0.000000699          ← way too small! broke the paper's formula
+```
+
+`lr=1.0` means: "I'm not adding any scaling. Let the scheduler decide everything."
+
+**Concrete example — step 4000 (peak LR):**
+
+```
+Before scheduler.step():
+    optimizer.param_groups[0]['lr'] = 0.000349    ← from step 3999
+
+scheduler.step():
+    TransformerScheduler(4000) = 256^(-0.5) × min(4000^(-0.5), 4000 × 4000^(-1.5))
+                               = 0.0625 × 0.01581
+                               = 0.000988
+    base_lr × 0.000988 = 1.0 × 0.000988 = 0.000988
+
+After scheduler.step():
+    optimizer.param_groups[0]['lr'] = 0.000988    ← overwritten!
+
+Next optimizer.step():
+    for each parameter:
+        weight -= 0.000988 × gradient    ← uses the new lr
 ```
 
 ---
