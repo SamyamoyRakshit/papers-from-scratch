@@ -43,6 +43,7 @@ training:
   label_smoothing: 0.1         # Paper: 0.1, Section 5.4 (same as paper ✓)
   warmup_steps: 4000           # Paper: 4000, Section 5.3 (same as paper ✓)
   clip_grad_norm: 1.0          # Max gradient norm — not in paper, safety net against exploding gradients
+  val_split: 0.1               # Fraction of data reserved for validation (10%)
 
 # --- Optimizer (Section 5.3 — all same as paper ✓) ---
 optimizer:
@@ -57,6 +58,8 @@ data:
   max_rows: 500000       # Start with 500K rows (full dataset: 8.5M)
   vocab_size: 16000      # Paper: ~37000, Section 5.1 (reduced — 16K is better for 500K pairs)
   num_workers: 0         # Data loading workers — 0 = main process only (safe for macOS/MPS)
+  filter_max_ratio: 5.0  # Drop pairs where max(src_len, tgt_len) / min(...) > this (skew filter)
+  filter_min_words: 1    # Drop pairs where either side has fewer words than this
 
 # --- Special Tokens ---
 tokens:
@@ -73,9 +76,10 @@ tokens:
 seed: 42
 
 # --- Device ---
-device: "auto"  # "auto" → MPS if available, else CPU. Options: "auto", "mps", "cpu", "cuda"
+device: "auto"  # "auto" -> MPS/CUDA if available, else CPU. Options: "auto", "mps", "cpu", "cuda"
 
 # --- Paths ---
 paths:
-  checkpoint_dir: "checkpoints/"
-  log_dir: "logs/"
+  checkpoint_dir: "transformer/checkpoints/base/"
+  log_dir: "transformer/logs/base/"
+  tokenizer_path: "transformer/tokenizer/base/sp.model"

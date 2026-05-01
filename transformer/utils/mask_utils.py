@@ -33,8 +33,10 @@ def create_causal_mask(size: int) -> torch.Tensor:
         The two leading dimensions (1, 1) allow broadcasting across
         batch_size and num_heads.
     """
-    # torch.tril: lower triangular — 1s on and below diagonal, 0s above
-    return torch.tril(torch.ones(size, size)).unsqueeze(0).unsqueeze(1)
+    # torch.tril: lower triangular — 1s on and below diagonal, 0s above.
+    # dtype=torch.bool so this combines with the bool padding mask via `&`
+    # (a float mask raises "Unsupported type Float" on bitwise AND).
+    return torch.tril(torch.ones(size, size, dtype=torch.bool)).unsqueeze(0).unsqueeze(1)
 
 
 def create_src_mask(src: torch.Tensor, pad_idx: int) -> torch.Tensor:

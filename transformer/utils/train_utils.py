@@ -1,10 +1,51 @@
+import json
+import logging
 import os
+import random
 from tqdm import tqdm
 
+import numpy as np
 import torch
 import torch.nn as nn
+from torch.utils.tensorboard import SummaryWriter
 
 from .mask_utils import create_src_mask, create_tgt_mask, create_memory_mask
+
+logger = logging.getLogger(__name__)
+
+
+def _update_leaderboard(parent_dir: str, run_name: str, val_loss: float) -> None:
+    """
+    Record this run's best val_loss in {parent_dir}/leaderboard.json and repoint
+    the {parent_dir}/best.pt symlink at the global best across all runs.
+
+    parent_dir holds run_<timestamp>/ subdirs; run_name is the basename of the
+    current run dir. Symlink target is relative ("run_X/best.pt") so the
+    parent dir stays portable if moved.
+    """
+    leaderboard_path = os.path.join(parent_dir, "leaderboard.json")
+    board: dict[str, float] = {}
+    if os.path.exists(leaderboard_path):
+        with open(leaderboard_path) as f:
+            board = json.load(f)
+
+    board[run_name] = val_loss
+    with open(leaderboard_path, "w") as f:
+        json.dump(board, f, indent=2, sort_keys=True)
+
+    best_run = min(board, key=board.get)
+    symlink = os.path.join(parent_dir, "best.pt")
+    target = os.path.join(best_run, "best.pt")  # relative -> portable across moves
+    if os.path.islink(symlink) or os.path.exists(symlink):
+        os.unlink(symlink)
+    os.symlink(target, symlink)
+
+
+def set_seed(seed: int) -> None:
+    """Seed random/numpy/torch (CPU + CUDA + MPS) for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)     # handles CPU + CUDA (all) + MPS
 
 def train_on_epoch(
         model: nn.Module,
@@ -16,7 +57,8 @@ def train_on_epoch(
         clip_grad_norm: float,
         device: torch.device,
         epoch: int,
-        num_epochs: int
+        num_epochs: int,
+        writer: SummaryWriter | None = None,
 ) -> float:
     """
     Train the model for one epoch.
@@ -35,6 +77,10 @@ def train_on_epoch(
         device: "mps", "cuda", or "cpu".
         epoch: Current epoch number (for logging).
         num_epochs: Total number of epochs (for logging).
+        writer: Optional TensorBoard SummaryWriter. If provided, logs
+            per-step train loss and learning rate (under tags
+            "train/loss_step" and "train/lr") — useful for visualizing
+            the warmup → decay LR curve from Section 5.3.
 
     Returns:
         float: Average loss over all batches in this epoch.
@@ -82,7 +128,7 @@ def train_on_epoch(
 
         # Update weights and learning rate
         optimizer.step()                              # update parameters
-        scheduler.step()                              # update lr (warmup → decay)
+        scheduler.step()                              # update lr (warmup -> decay)
 
         # Track loss — count non-pad tokens for accurate average
         n_tokens = (tgt_output != pad_idx).sum().item() # .item(): Converts a one-element tensor into a Python scalar, removing the tensor wrapper.
@@ -92,7 +138,13 @@ def train_on_epoch(
         # Update progress bar with current loss and learning rate
         pbar.set_postfix(loss=f"{total_loss / total_tokens:.4f}",
                          lr=f"{scheduler.get_last_lr()[0]:.2e}")
-            
+
+        # Per-step TensorBoard logging — captures the warmup ramp (paper Section 5.3)
+        if writer is not None:
+            step = scheduler.last_epoch  # LambdaLR's global step count, incremented on .step()
+            writer.add_scalar("train/loss_step", loss.item(), step)
+            writer.add_scalar("train/lr", scheduler.get_last_lr()[0], step)
+
     return total_loss / total_tokens
     
 
@@ -163,7 +215,12 @@ def train(
         clip_grad_norm: float,
         device: torch.device,
         num_epochs: int,
-        checkpoint_dir: str
+        checkpoint_dir: str,
+        seed: int,
+        start_epoch: int = 1,
+        best_val_loss: float = float("inf"),
+        git_hash: str = "unknown",
+        writer: SummaryWriter | None = None,
 ) -> None:
     """
     Full training loop — train for num_epochs, validate each epoch, save best model.
@@ -180,22 +237,44 @@ def train(
         device: "mps", "cuda", or "cpu".
         num_epochs: Total number of epochs.
         checkpoint_dir: Directory to save checkpoints.
+        seed: Base seed. Re-seeded each epoch as (seed + epoch) so uninterrupted
+            and resumed runs are bit-identical at epoch boundaries.
+        start_epoch: First epoch to run (for resume). Defaults to 1.
+        best_val_loss: Best val loss seen so far (for resume). Defaults to +inf.
+        git_hash: Commit hash that produced these weights — saved in checkpoint
+            so a year-old run can be traced back to its source code.
+        writer: Optional TensorBoard SummaryWriter. If provided, logs per-epoch
+            train and val loss (under "train/loss_epoch" and "val/loss_epoch")
+            and forwards to train_on_epoch for per-step lr logging.
     """
     os.makedirs(checkpoint_dir, exist_ok=True)
 
-    best_val_loss = float("inf")
+    for epoch in range(start_epoch, num_epochs+1):
+        # Re-seed each epoch so resumes are bit-identical at epoch boundaries:
+        # uninterrupted and resumed runs both hit set_seed(seed + epoch) here,
+        # giving identical dropout masks / shuffle order from this point on.
+        set_seed(seed + epoch)
 
-    for epoch in range(1, num_epochs+1):
         # Train
         train_loss = train_on_epoch(
             model, train_loader, criterion, optimizer, scheduler,
-            pad_idx, clip_grad_norm, device, epoch, num_epochs
+            pad_idx, clip_grad_norm, device, epoch, num_epochs,
+            writer=writer,
         )
 
         # Validate
         val_loss = validate(model, val_loader, criterion, pad_idx, device)
 
-        print(f"  Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+        logger.info(f"  Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+
+        # Per-epoch TensorBoard logging — easy comparison across runs
+        if writer is not None:
+            writer.add_scalar("train/loss_epoch", train_loss, epoch)
+            writer.add_scalar("val/loss_epoch", val_loss, epoch)
+
+        improved = val_loss < best_val_loss
+        if improved:
+            best_val_loss = val_loss
 
         checkpoint = {
             'epoch': epoch,
@@ -203,18 +282,26 @@ def train(
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': scheduler.state_dict(),
             'train_loss': train_loss,
-            'val_loss': val_loss
+            'val_loss': val_loss,
+            'best_val_loss': best_val_loss,
+            'git_hash': git_hash,                    # commit that produced these weights
         }
-    
+
         # Save best model
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        if improved:
             checkpoint_path = os.path.join(checkpoint_dir, "best.pt")
             torch.save(obj=checkpoint, f=checkpoint_path)
-            print(f"  Saved best model (val_loss: {val_loss:.4f}) -> {checkpoint_path}")
+            logger.info(f"  Saved best model (val_loss: {val_loss:.4f}) -> {checkpoint_path}")
 
-        # Save latest checkpoint every epoch (for resuming)
+            # Update parent-level leaderboard.json + best.pt symlink so the
+            # global best across all runs is always one fixed path away.
+            parent_dir = os.path.dirname(checkpoint_dir.rstrip(os.sep))
+            run_name = os.path.basename(checkpoint_dir.rstrip(os.sep))
+            _update_leaderboard(parent_dir, run_name, val_loss)
+
+        # Save latest checkpoint every epoch (for resuming) — silent to avoid log noise.
         latest_path = os.path.join(checkpoint_dir, "last.pt")
         torch.save(obj=checkpoint, f=latest_path)
-        
-    print(f"\nTraining complete. Best val loss: {best_val_loss:.4f}")
+
+    logger.info(f"Training complete. Best val loss: {best_val_loss:.4f}")
+    logger.info(f"Latest weights: {latest_path}")

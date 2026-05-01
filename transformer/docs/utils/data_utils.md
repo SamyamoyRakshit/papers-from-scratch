@@ -1,43 +1,45 @@
 ## Table of Contents
 
 1. [What the Paper Says](#what-the-paper-says)
-2. [The Data Pipeline — Big Picture](#the-data-pipeline--big-picture)
-3. [Step 1 — Filter Bad Pairs (`is_valid_pair`)](#step-1--filter-bad-pairs-is_valid_pair)
-4. [Step 2 — Train Tokenizer (`train_tokenizer`)](#step-2--train-tokenizer-train_tokenizer)
+2. [Configuration — `base.yaml` vs `tiny.yaml`](#configuration--baseyaml-vs-tinyyaml)
+3. [The Data Pipeline — Big Picture](#the-data-pipeline--big-picture)
+4. [Step 1 — Filter Bad Pairs (`is_valid_pair`)](#step-1--filter-bad-pairs-is_valid_pair)
+5. [Step 2 — Train Tokenizer (`train_tokenizer`)](#step-2--train-tokenizer-train_tokenizer)
    - [SentencePieceTrainer vs SentencePieceProcessor](#sentencepiecetrainer-vs-sentencepieceprocessor)
    - [Why Shared Vocabulary?](#why-shared-vocabulary)
-5. [Step 3 — Encode Text (`encode` / `decode`)](#step-3--encode-text-encode--decode)
+6. [Step 3 — Encode Text (`encode` / `decode`)](#step-3--encode-text-encode--decode)
    - [`max_seq_len` vs `max_len` — Two Different Things](#max_seq_len-vs-max_len--two-different-things)
-6. [Step 4 — Build Dataset (`TranslationDataset`)](#step-4--build-dataset-translationdataset)
+7. [Step 4 — Build Dataset (`TranslationDataset`)](#step-4--build-dataset-translationdataset)
    - [What PyTorch's `Dataset` Base Class Does](#what-pytorchs-dataset-base-class-does)
      - [Why DataLoader needs `__len__`](#why-dataloader-needs-__len__)
      - [How OUR DataLoader works (with `batch_sampler`)](#how-our-dataloader-works-with-batch_sampler)
    - [End-to-End Example](#end-to-end-example)
-7. [Step 5 — Token-Based Batching (`TokenBatchSampler`)](#step-5--token-based-batching-tokenbatchsampler)
+8. [Step 5 — Token-Based Batching (`TokenBatchSampler`)](#step-5--token-based-batching-tokenbatchsampler)
    - [Why Not Fixed Batch Size?](#why-not-fixed-batch-size)
    - [The Algorithm — Step by Step](#the-algorithm--step-by-step)
    - [Why Padding Still Exists](#why-padding-still-exists)
    - [`yield` vs `return`](#yield-vs-return)
    - [Batch Size — You Can't Know It in Advance](#batch-size--you-cant-know-it-in-advance)
-8. [Step 6 — Collate & DataLoader (`collate_fn`, `create_dataloaders`)](#step-6--collate--dataloader-collate_fn-create_dataloaders)
+9. [Step 6 — Collate & DataLoader (`collate_fn`, `create_dataloaders`)](#step-6--collate--dataloader-collate_fn-create_dataloaders)
    - [Why Custom `collate_fn`?](#why-custom-collate_fn)
    - [`batch_sampler` vs `batch_size` — Mutually Exclusive](#batch_sampler-vs-batch_size--mutually-exclusive)
    - [`pin_memory` — Why We Don't Use It](#pin_memory--why-we-dont-use-it)
    - [Train / Val Split — No Test Set](#train--val-split--no-test-set)
-9. [`num_workers` — Why 0 on macOS](#num_workers--why-0-on-macos)
-   - [What Workers Do](#what-workers-do)
-   - [Why macOS Is Different](#why-macos-is-different)
-   - [When Workers Help vs Hurt](#when-workers-help-vs-hurt)
-10. [Data Quality — Noisy Pairs](#data-quality--noisy-pairs)
-11. [Vocab Size — How 16K Subwords Cover 1M Sentences](#vocab-size--how-16k-subwords-cover-1m-sentences)
+10. [`num_workers` — Why 0 on macOS](#num_workers--why-0-on-macos)
+    - [What Workers Do](#what-workers-do)
+    - [Why macOS Is Different](#why-macos-is-different)
+    - [When Workers Help vs Hurt](#when-workers-help-vs-hurt)
+11. [Data Quality — Noisy Pairs](#data-quality--noisy-pairs)
+12. [Vocab Size — How 16K Subwords Cover 1M Sentences](#vocab-size--how-16k-subwords-cover-1m-sentences)
     - [Shared Vocab — Same Table, Different IDs](#shared-vocab--same-table-different-ids)
     - [Why 16K and Not 37K?](#why-16k-and-not-37k)
-12. [The Full Journey — Raw Text to Model Input](#the-full-journey--raw-text-to-model-input)
+13. [The Full Journey — Raw Text to Model Input](#the-full-journey--raw-text-to-model-input)
     - [Batch Shape Through Each Step](#batch-shape-through-each-step)
     - [What's Shared vs Different Between Encoder and Decoder](#whats-shared-vs-different-between-encoder-and-decoder)
     - [Why 5K PE Rows When max_seq_len = 128?](#why-5k-pe-rows-when-max_seq_len--128)
-13. [All the Numbers — Cheat Sheet](#all-the-numbers--cheat-sheet)
-14. [References](#references)
+14. [Integration — How `train.py` Wires Everything Together](#integration--how-trainpy-wires-everything-together)
+15. [All the Numbers — Cheat Sheet](#all-the-numbers--cheat-sheet)
+16. [References](#references)
 
 ---
 
@@ -53,6 +55,44 @@ Our adaptation:
 - **Dataset:** AI4Bharat Samanantar English-Bengali (8.5M pairs) instead of WMT 2014 English-German (4.5M pairs)
 - **Vocab size:** 16,000 (reduced for 500K pairs — 37K would be too large)
 - **Batch tokens:** ~8K per side (reduced for M1 memory — paper used ~25K on 8x P100)
+
+---
+
+# Configuration — `base.yaml` vs `tiny.yaml`
+
+`data_utils.py` is config-agnostic — it takes plain arguments. Values come from two YAML presets in `configs/`. `tiny.yaml` is a debug preset that runs the whole pipeline in ~2 minutes so you can catch bugs fast. `base.yaml` is the real training config.
+
+Every argument to the data_utils functions maps to one YAML key:
+
+| YAML key | `base.yaml` | `tiny.yaml` | Consumed by |
+|---|---|---|---|
+| `data.dataset` | `"ai4bharat/samanantar"` | `"ai4bharat/samanantar"` | `load_dataset(path=...)` in `train.py` |
+| `data.tgt_lang` | `"bn"` | `"bn"` | `load_dataset(name=...)` in `train.py` |
+| `data.max_rows` | `500000` | `1000` | `raw_dataset.select(range(...))` in `train.py` |
+| `data.vocab_size` | `16000` | `4000` | `train_tokenizer(vocab_size=...)` |
+| `data.num_workers` | `0` | `0` | `DataLoader(num_workers=...)` |
+| `data.filter_max_ratio` | `5.0` | `5.0` | `is_valid_pair(max_ratio=...)` via `TranslationDataset` |
+| `data.filter_min_words` | `1` | `1` | `is_valid_pair(min_words=...)` via `TranslationDataset` |
+| `training.max_seq_len` | `128` | `64` | `encode(max_seq_len=...)` |
+| `training.max_tokens_per_batch` | `8000` | `2000` | `TokenBatchSampler(max_tokens=...)` |
+| `training.val_split` | `0.1` | `0.1` | `train_test_split(test_size=...)` inside `create_dataloaders` |
+| `tokens.pad_idx` | `0` | `0` | `train_tokenizer(pad_id=...)`, `collate_fn(pad_idx=...)` |
+| `tokens.sos_idx` | `1` | `1` | `train_tokenizer(sos_id=...)`, prepended in `encode` |
+| `tokens.eos_idx` | `2` | `2` | `train_tokenizer(eos_id=...)`, appended in `encode` |
+| `tokens.unk_idx` | `3` | `3` | `train_tokenizer(unk_id=...)` |
+| `seed` | `42` | `42` | `train_test_split(seed=...)` |
+| `paths.tokenizer_path` | `"transformer/tokenizer/base/sp.model"` | `"transformer/tokenizer/tiny/sp.model"` | `load_tokenizer(model_path=...)` or `train_tokenizer(model_prefix=...)` |
+
+**What changes between the two presets (and why):**
+
+- `vocab_size` 16K → 4K — with 1000 rows of text you can't learn 16K meaningful subword merges; 4K is enough to verify encoding works.
+- `max_seq_len` 128 → 64 — shorter sequences mean smaller tensors, faster forward/backward pass.
+- `max_tokens_per_batch` 8K → 2K — smaller batches mean fewer tokens per step; pipeline still exercises the full batch sampler.
+- `max_rows` 500K → 1000 — enough data to build one batch and run a few steps, not enough to actually learn translation.
+
+Everything else (pad/sos/eos/unk indices, seed, val split, filter thresholds, num_workers) stays identical — those are pipeline invariants, not tuning knobs.
+
+**Workflow:** run `tiny.yaml` first — if loss doesn't move across 5 epochs, there's a bug. Only switch to `base.yaml` once the pipeline is verified.
 
 ---
 
@@ -130,9 +170,9 @@ is_valid_pair(src, tgt)
 └───────┬────────────────┘
         │ No
         ▼
-┌───────────────────────┐    Yes
-│ length ratio > 5.0?   │────────→ return False
-└───────┬───────────────┘
+┌────────────────────────┐    Yes
+│ length ratio>max_ratio?│────────→ return False
+└───────┬────────────────┘
         │ No
         ▼
    return True
@@ -156,7 +196,7 @@ The `_bengali_pattern` regex checks Unicode range `\u0980-\u09FF` — the Bengal
 # Step 2 — Train Tokenizer (`train_tokenizer`)
 
 ```python
-def train_tokenizer(dataset, vocab_size, pad_id, sos_id, eos_id, unk_id, model_prefix="tokenizer/sp"):
+def train_tokenizer(dataset, vocab_size, pad_id, sos_id, eos_id, unk_id, model_prefix):
 ```
 
 ```
@@ -343,31 +383,40 @@ See [positional_encoding.md Section 9](../modules/positional_encoding.md) for a 
 
 ```python
 class TranslationDataset(Dataset):
-    def __init__(self, dataset, sp, max_seq_len):
-        self.pairs = []
-        skipped = 0
+    def __init__(
+            self,
+            dataset,
+            sp: spm.SentencePieceProcessor,
+            max_seq_len: int,
+            filter_max_ratio: float = 5.0,
+            filter_min_words: int = 1,
+    ):
+        self.pairs = []                                # (src_ids, tgt_ids) tuples
+        skipped = 0                                    # count of filtered pairs
 
         for example in dataset:
-            src = example["src"].strip()       # HuggingFace Samanantar uses "src"/"tgt" keys
+            src = example["src"].strip()               # HuggingFace Samanantar uses "src"/"tgt" keys
             tgt = example["tgt"].strip()
 
-            if not is_valid_pair(src, tgt):
+            if not is_valid_pair(src, tgt, max_ratio=filter_max_ratio, min_words=filter_min_words):
                 skipped += 1
                 continue
 
-            src_ids = encode(sp, src, max_seq_len)
+            src_ids = encode(sp, src, max_seq_len)     # text → token IDs with <sos>/<eos>
             tgt_ids = encode(sp, tgt, max_seq_len)
 
-            if len(src_ids) > 2 and len(tgt_ids) > 2:
+            if len(src_ids) > 2 and len(tgt_ids) > 2:  # must have at least 1 real token
                 self.pairs.append((src_ids, tgt_ids))
             else:
-                skipped += 1
+                skipped += 1                           # empty after encoding
 
-        print(f"[TranslationDataset] Kept {len(self.pairs)} pairs ({...}%), filtered {skipped} ({...}%)")
+        total = len(self.pairs) + skipped              # base for percentages
+        print(f"[TranslationDataset] Kept {len(self.pairs)} pairs ({len(self.pairs)/total*100:.1f}%), "
+              f"filtered {skipped} ({skipped/total*100:.1f}%)")
 ```
 
 ```
-TranslationDataset(raw_dataset, sp, max_seq_len=128)
+TranslationDataset(raw_dataset, sp, max_seq_len=128, filter_max_ratio, filter_min_words)
         │
         ▼
 ┌───────────────────────────────────────────┐
@@ -762,21 +811,13 @@ collate_fn(batch, pad_idx=0)
 ```
 
 ```
-create_dataloaders(dataset_name, tgt_lang, max_rows, sp, max_seq_len, max_tokens, pad_idx, seed, num_workers)
+create_dataloaders(raw_dataset, sp, max_seq_len, max_tokens, pad_idx, seed, num_workers,
+                   val_split, filter_max_ratio, filter_min_words)
         │
-        ▼
-┌───────────────────────────────────────────────────┐
-│ load_dataset("ai4bharat/samanantar", "bn",        │
-│              split="train")                       │
-│ → 8.5M raw pairs                                  │
-└───────┬───────────────────────────────────────────┘
-        │
-        ▼
-┌───────────────────────────────────────────────────┐
-│ raw_dataset.select(range(500000))                 │
-│ → cap to 500K pairs                               │
-└───────┬───────────────────────────────────────────┘
-        │
+        │  raw_dataset is loaded and size-capped in scripts/train.py:
+        │    raw_dataset = load_dataset("ai4bharat/samanantar", "bn", split="train")
+        │    raw_dataset = raw_dataset.select(range(500000))   # cap to 500K
+        │  then passed in here (so the tokenizer and dataloaders share one load)
         ▼
 ┌───────────────────────────────────────────────────┐
 │ train_test_split(test_size=0.1, seed=42)          │
@@ -786,12 +827,14 @@ create_dataloaders(dataset_name, tgt_lang, max_rows, sp, max_seq_len, max_tokens
         │
         ├──────────────────────┐
         ▼                      ▼
-┌───────────────────┐  ┌────────────────────┐
-│ TranslationDataset│  │ TranslationDataset │
-│ (train_raw, sp,   │  │ (val_raw, sp,      │
-│  max_seq_len)     │  │  max_seq_len)      │
-│ → train_dataset   │  │ → val_dataset      │
-└───────┬───────────┘  └───────┬────────────┘
+┌────────────────────────┐  ┌────────────────────────┐
+│ TranslationDataset     │  │ TranslationDataset     │
+│ (train_raw, sp,        │  │ (val_raw, sp,          │
+│  max_seq_len,          │  │  max_seq_len,          │
+│  filter_max_ratio,     │  │  filter_max_ratio,     │
+│  filter_min_words)     │  │  filter_min_words)     │
+│ → train_dataset        │  │ → val_dataset          │
+└───────┬────────────────┘  └───────┬────────────────┘
         │                      │
         ▼                      ▼
 ┌──────────────────┐  ┌──────────────────┐
@@ -830,12 +873,18 @@ torch.stack([
 Our custom `collate_fn` pads sequences to the longest in the batch:
 
 ```python
-def collate_fn(batch, pad_idx):
-    src_seqs = [torch.tensor(pair[0]) for pair in batch]
-    tgt_seqs = [torch.tensor(pair[1]) for pair in batch]
+def collate_fn(batch: List[Tuple[List[int], List[int]]], pad_idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    # List of token IDs → list of long tensors (embedding layers require int64 indices)
+    src_seqs = [torch.tensor(pair[0], dtype=torch.long) for pair in batch]   # pair[0] = src_ids
+    tgt_seqs = [torch.tensor(pair[1], dtype=torch.long) for pair in batch]   # pair[1] = tgt_ids
 
-    src_padded = pad_sequence(src_seqs, batch_first=True, padding_value=pad_idx)
-    tgt_padded = pad_sequence(tgt_seqs, batch_first=True, padding_value=pad_idx)
+    # pad_sequence pads to the longest seq in the batch → rectangular (batch, seq_len) tensor
+    src_padded = torch.nn.utils.rnn.pad_sequence(
+        sequences=src_seqs, batch_first=True, padding_value=pad_idx
+    )
+    tgt_padded = torch.nn.utils.rnn.pad_sequence(
+        sequences=tgt_seqs, batch_first=True, padding_value=pad_idx
+    )
 
     return src_padded, tgt_padded
 ```
@@ -954,7 +1003,7 @@ DataLoader(dataset=train_dataset, batch_sampler=train_sampler, pin_memory=True, 
 ## Train / Val Split — No Test Set
 
 ```python
-split = raw_dataset.train_test_split(test_size=0.1, seed=seed)
+split = raw_dataset.train_test_split(test_size=val_split, seed=seed)
 train_raw = split["train"]     # 90% — train on this
 val_raw = split["test"]        # 10% — validate on this
 ```
@@ -1457,6 +1506,108 @@ Attention:  363 × 8 × 128 × 128                       = ~150 MB per layer (ac
 
 ---
 
+# Integration — How `train.py` Wires Everything Together
+
+`scripts/train.py` is the only caller of these functions. It loads the YAML config, then invokes each data_utils function in order:
+
+```python
+# --- 1. Load config (base.yaml or --config configs/tiny.yaml) ---
+with open(args.config, "r") as f:
+    config = yaml.safe_load(f)
+
+# --- 2. Load HuggingFace dataset ONCE — reused by tokenizer + dataloaders ---
+raw_dataset = load_dataset(
+    path=config["data"]["dataset"],      # "ai4bharat/samanantar"
+    name=config["data"]["tgt_lang"],     # "bn"
+    split="train",
+)
+if config["data"]["max_rows"]:
+    raw_dataset = raw_dataset.select(
+        range(min(config["data"]["max_rows"], len(raw_dataset)))
+    )                                    # cap to 500K (base) or 1000 (tiny)
+
+# --- 3. Tokenizer: train if missing, else reuse saved .model file ---
+tokenizer_path = config["paths"]["tokenizer_path"]    # e.g. "transformer/tokenizer/base/sp.model"
+model_prefix = tokenizer_path.removesuffix(".model")  # e.g. "transformer/tokenizer/base/sp"
+if os.path.exists(tokenizer_path):
+    sp = load_tokenizer(tokenizer_path)
+else:
+    sp = train_tokenizer(
+        dataset=raw_dataset,
+        vocab_size=config["data"]["vocab_size"],       # 16000 (base) or 4000 (tiny)
+        pad_id=config["tokens"]["pad_idx"],            # 0
+        sos_id=config["tokens"]["sos_idx"],            # 1
+        eos_id=config["tokens"]["eos_idx"],            # 2
+        unk_id=config["tokens"]["unk_idx"],            # 3
+        model_prefix=model_prefix,
+    )
+
+# --- 4. Build train + val DataLoaders from the same raw_dataset ---
+train_loader, val_loader = create_dataloaders(
+    raw_dataset=raw_dataset,
+    sp=sp,
+    max_seq_len=config["training"]["max_seq_len"],            # 128 (base) or 64 (tiny)
+    max_tokens=config["training"]["max_tokens_per_batch"],    # 8000 (base) or 2000 (tiny)
+    pad_idx=config["tokens"]["pad_idx"],                      # 0
+    seed=config["seed"],                                      # 42
+    num_workers=config["data"]["num_workers"],                # 0
+    val_split=config["training"]["val_split"],                # 0.1
+    filter_max_ratio=config["data"]["filter_max_ratio"],      # 5.0
+    filter_min_words=config["data"]["filter_min_words"],      # 1
+)
+```
+
+```
+          YAML config
+               │
+               ▼
+     ┌─────────────────────┐
+     │ yaml.safe_load      │
+     └─────────┬───────────┘
+               │
+               ▼
+     ┌─────────────────────┐
+     │ load_dataset + cap  │ ← HuggingFace raw_dataset (loaded ONCE)
+     └─────────┬───────────┘
+               │ raw_dataset
+               ├─────────────────────────────────────┐
+               ▼                                     │
+     ┌──────────────────────────────┐                │
+     │ Tokenizer branch             │                │
+     │  ──────────────────────      │                │
+     │  train_tokenizer  ← first run│                │
+     │         OR                   │                │
+     │  load_tokenizer   ← reruns   │                │
+     └──────────┬───────────────────┘                │
+                │ sp                                 │ raw_dataset
+                ▼                                    ▼
+     ┌──────────────────────────────────────────────────┐
+     │ create_dataloaders (uses sp + raw_dataset)       │ ← always runs the same way
+     └──────────┬───────────────────────────────────────┘   (not affected by first/rerun)
+                │
+                ▼
+       (train_loader, val_loader)
+                │
+                ▼
+          training loop
+```
+
+**Two design decisions worth calling out:**
+
+1. **`raw_dataset` is loaded once and passed in** — `train_tokenizer` needs it for BPE training, `create_dataloaders` needs it to build the Dataset. Loading the HF dataset twice would download/prepare 500K pairs twice. That's why neither function calls `load_dataset` internally — the caller owns it.
+
+2. **Tokenizer is cached on disk** — `.model` lives at the path in `paths.tokenizer_path`. First run trains + saves. Subsequent runs skip the BPE training step entirely (`os.path.exists` check). Delete the `.model` file to force a retrain (e.g. after changing `vocab_size` or `max_rows`).
+
+**Running:**
+
+```bash
+python -m transformer.scripts.train                           # uses configs/base.yaml by default
+python -m transformer.scripts.train --config configs/tiny.yaml   # debug run
+python -m transformer.scripts.train --resume checkpoints/last.pt # resume from checkpoint
+```
+
+---
+
 # All the Numbers — Cheat Sheet
 
 ```
@@ -1479,10 +1630,13 @@ Attention:  363 × 8 × 128 × 128                       = ~150 MB per layer (ac
                             (500K out of 8.5M total in Samanantar)
 
 ~448K = pairs after filter  Valid pairs that survive is_valid_pair + len > 2 check
+                            (NOT fixed - depend on is_valid_pair)
 
 450K = train pairs          90% of 500K (after train_test_split)
+                            (NOT fixed - 90% 0f Data after is_valid_pair and train_test_split)
 
 50K  = val pairs            10% of 500K
+                            (NOT fixed - 10% 0f Data after is_valid_pair and train_test_split)
 
 ~363 = sentences/batch      Varies! Short sentences → more per batch, long → fewer
                             (NOT fixed — depends on sentence lengths in that batch)
@@ -1494,6 +1648,21 @@ Attention:  363 × 8 × 128 × 128                       = ~150 MB per layer (ac
 
 8    = num_heads            Multi-head attention splits 256 into 8 heads of 32 each
 ```
+
+**Same numbers, both presets side-by-side:**
+
+| Number | `base.yaml` | `tiny.yaml` | Meaning |
+|---|---|---|---|
+| `vocab_size` | 16000 | 4000 | Subword dictionary size |
+| `d_model` | 256 | 64 | Embedding / hidden dim |
+| `max_len` (PE) | 5000 | 512 | Pre-computed PE rows |
+| `max_seq_len` | 128 | 64 | Hard cap after truncation |
+| `max_tokens_per_batch` | 8000 | 2000 | Token budget per batch |
+| `max_rows` | 500000 | 1000 | HF rows loaded |
+| `num_layers` | 4 | 2 | Encoder / decoder depth |
+| `num_heads` | 8 | 4 | Attention heads |
+
+`d_model`, `max_len`, `num_layers`, `num_heads` live in `config["model"]` and belong to the model modules — shown here only for completeness. The rest are the values `data_utils.py` actually consumes.
 
 ---
 

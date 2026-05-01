@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from typing import List, Tuple
@@ -5,8 +6,9 @@ import random
 
 import torch
 from torch.utils.data import Dataset, DataLoader, Sampler
-from datasets import load_dataset
 import sentencepiece as spm
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -62,7 +64,7 @@ def train_tokenizer(
         sos_id: int,
         eos_id: int,
         unk_id: int,
-        model_prefix: str = "tokenizer/sp"
+        model_prefix: str
 ) -> spm.SentencePieceProcessor:
     """
     Train a shared SentencePiece BPE tokenizer on both source and target sentences.
@@ -189,7 +191,10 @@ class TranslationDataset(Dataset):
             self,
             dataset,
             sp: spm.SentencePieceProcessor,
-            max_seq_len: int
+            max_seq_len: int,
+            filter_max_ratio: float = 5.0,
+            filter_min_words: int = 1,
+            name: str = "dataset",
     ):
         self.pairs = []  # stores all valid (src_ids, tgt_ids) tuples
         skipped = 0      # count filtered pairs — so we know if data quality is bad
@@ -198,7 +203,7 @@ class TranslationDataset(Dataset):
             src = example["src"].strip()
             tgt = example["tgt"].strip()
 
-            if not is_valid_pair(src, tgt):
+            if not is_valid_pair(src, tgt, max_ratio=filter_max_ratio, min_words=filter_min_words):
                 skipped += 1
                 continue                        # skip bad pairs (same filter as tokenizer training)
 
@@ -211,7 +216,7 @@ class TranslationDataset(Dataset):
                 skipped += 1                     # empty after encoding — tokenizer produced no real tokens
 
         total = len(self.pairs) + skipped
-        print(f"[TranslationDataset] Kept {len(self.pairs)} pairs ({len(self.pairs)/total*100:.1f}%), filtered {skipped} ({skipped/total*100:.1f}%)")
+        logger.info(f"[{name}] Kept {len(self.pairs)} pairs ({len(self.pairs)/total*100:.1f}%), filtered {skipped} ({skipped/total*100:.1f}%)")
 
     def __len__(self):                                              # DataLoader calls this to know total pairs
         return len(self.pairs)
@@ -318,50 +323,44 @@ def collate_fn(batch: List[Tuple[List[int], List[int]]], pad_idx: int) -> Tuple[
 
 
 def create_dataloaders(
-        dataset_name: str,
-        tgt_lang: str,
-        max_rows: int,
+        raw_dataset,
         sp: spm.SentencePieceProcessor,
         max_seq_len: int,
         max_tokens: int,
         pad_idx: int,
         seed: int,
         num_workers: int,
-        val_split: float = 0.1
+        val_split: float,
+        filter_max_ratio: float = 5.0,
+        filter_min_words: int = 1,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create training and validation DataLoaders.
 
     Args:
-        dataset_name (str): HuggingFace dataset name.
-        tgt_lang (str): Target language code (e.g. "bn"). Used as dataset subset.
-        max_rows (int): Maximum number of rows to load.
+        raw_dataset: HuggingFace dataset already loaded and size-capped by the caller
+            (loaded once via `load_dataset(...)` in scripts/train.py and passed here).
         sp: Trained SentencePiece tokenizer.
         max_seq_len (int): Max sequence length.
         max_tokens (int): Max tokens per batch.
         pad_idx (int): Padding token index.
         seed (int): Random seed for reproducible train/val splits.
         num_workers (int): Number of data loading workers. 0 = main process only.
-        val_split (float): Fraction of data for validation. Default: 0.1.
+        val_split (float): Fraction of data for validation (e.g. 0.1 = 10%).
+        filter_max_ratio (float): Max src/tgt word-count ratio for is_valid_pair. Default: 5.0.
+        filter_min_words (int): Min words per sentence for is_valid_pair. Default: 1.
 
     Returns:
         (train_loader, val_loader): DataLoader tuple.
     """
-    # Load from HuggingFace — e.g. load_dataset("ai4bharat/samanantar", "bn", split="train")
-    raw_dataset = load_dataset(path=dataset_name, name=tgt_lang, split="train")
-
-    # Cap dataset size — e.g. 500K out of 8.5M pairs for practical training time on M1
-    if max_rows:
-        raw_dataset = raw_dataset.select(range(min(max_rows, len(raw_dataset))))
-
     # Split into train (90%) and val (10%) — seed ensures same split every run
     split = raw_dataset.train_test_split(test_size=val_split, seed=seed)
     train_raw = split["train"]       # HuggingFace only creates "train" and "test" keys
     val_raw = split["test"]          # we use "test" as our validation set
 
     # Tokenize all pairs — filters bad pairs, encodes text → token IDs with `<sos>`/`<eos>`
-    train_dataset = TranslationDataset(train_raw, sp, max_seq_len)
-    val_dataset = TranslationDataset(val_raw, sp, max_seq_len)
+    train_dataset = TranslationDataset(train_raw, sp, max_seq_len, filter_max_ratio, filter_min_words, name="train")
+    val_dataset = TranslationDataset(val_raw, sp, max_seq_len, filter_max_ratio, filter_min_words, name="val")
 
     # Token-based batching (Section 5.1) — groups by ~8K tokens per batch, not fixed sentence count
     train_sampler = TokenBatchSampler(train_dataset, max_tokens, shuffle=True)

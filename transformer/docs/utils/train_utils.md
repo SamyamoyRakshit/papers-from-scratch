@@ -23,8 +23,9 @@
    - [Why Save Optimizer and Scheduler State](#why-save-optimizer-and-scheduler-state)
    - [Overfitting Detection — Train vs Val Loss](#overfitting-detection--train-vs-val-loss)
 10. [Progress Bar — tqdm](#progress-bar--tqdm)
-11. [Full Training Output — What You'll See](#full-training-output--what-youll-see)
-12. [References](#references)
+11. [TensorBoard Logging — Visualizing Training](#tensorboard-logging--visualizing-training)
+12. [Full Training Output — What You'll See](#full-training-output--what-youll-see)
+13. [References](#references)
 
 ---
 
@@ -127,7 +128,8 @@ def train_on_epoch(
         clip_grad_norm: float,           # 1.0
         device: torch.device,            # "mps" or "cuda" or "cpu"
         epoch: int,                      # current epoch (1, 2, ..., 30)
-        num_epochs: int                  # total epochs (30)
+        num_epochs: int,                 # total epochs (30)
+        writer: SummaryWriter | None = None,  # TensorBoard writer (optional)
 ) -> float:                              # returns average loss for this epoch
 ```
 
@@ -208,21 +210,31 @@ Both are needed. Without `@torch.no_grad()`, PyTorch still builds the computatio
 
 ```python
 def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
-          pad_idx, clip_grad_norm, device, num_epochs, checkpoint_dir) -> None:
+          pad_idx, clip_grad_norm, device, num_epochs, checkpoint_dir, seed,
+          start_epoch: int = 1,
+          best_val_loss: float = float("inf"),
+          git_hash: str = "unknown",
+          writer: SummaryWriter | None = None) -> None:
 ```
 
-**What it does:** The outermost loop — runs `num_epochs` (30) epochs, validates after each, saves checkpoints.
+**What it does:** The outermost loop — runs from `start_epoch` to `num_epochs`, validates after each, saves checkpoints.
+
+`start_epoch` and `best_val_loss` default to `1` and `+inf` for fresh runs. When `train.py` is invoked with `--resume`, those are loaded from the checkpoint and threaded in here — so resumed runs pick up at the right epoch and don't trivially overwrite `best.pt` (see [Why Save Optimizer and Scheduler State](#why-save-optimizer-and-scheduler-state)).
 
 ```python
 os.makedirs(checkpoint_dir, exist_ok=True)   # Create checkpoints/ if it doesn't exist
-best_val_loss = float("inf")                  # Initialize to infinity — any real loss is better
 ```
 
 ```python
-for epoch in range(1, num_epochs+1):          # 1, 2, 3, ..., 30
+for epoch in range(start_epoch, num_epochs+1):
+    # fresh run:    1, 2, 3, ..., 30
+    # resume @ 11:  11, 12, ..., 30
+    set_seed(seed + epoch)         # bit-identical resumes at epoch boundaries
     train_loss = train_on_epoch(...)
     val_loss = validate(...)
 ```
+
+**Per-epoch reseed (`set_seed(seed + epoch)`):** PyTorch's RNG state isn't saved in the checkpoint — saving it would force `weights_only=False` on load (arbitrary pickle execution). Instead, every epoch starts by re-seeding `random` / `numpy` / `torch` with `seed + epoch`. Both an uninterrupted run and a resumed one hit the same `set_seed(seed + epoch)` at the start of epoch *N*, so dropout masks, shuffle order, and DataLoader worker seeds line up from that point on — resumes are bit-identical at epoch boundaries (a mid-epoch crash still diverges within that epoch, but realigns at the next one).
 
 ---
 
@@ -718,9 +730,18 @@ checkpoint = {
     'optimizer_state_dict': optimizer.state_dict(),     # Adam's internal state
     'scheduler_state_dict': scheduler.state_dict(),    # LR scheduler state
     'train_loss': train_loss,                          # for logging
-    'val_loss': val_loss                               # for logging
+    'val_loss': val_loss,                              # for logging
+    'best_val_loss': best_val_loss,                    # accumulated state — needed on resume
+    'git_hash': git_hash,                              # commit that produced these weights
 }
 ```
+
+**Why log `git_hash`?** A year from now, when you load `best.pt` and want to know which code produced it, the answer is one line away: `torch.load("best.pt")["git_hash"]`. Without it, you'd be guessing from file timestamps.
+
+**Why `best_val_loss` is in the checkpoint but `train_loss` / `val_loss` aren't really *needed*:**
+
+- `train_loss` / `val_loss` are recomputed every epoch by `train_on_epoch()` / `validate()` — they're outputs, not inputs to the next epoch. They're saved purely so `train.py` can print them when resuming ("you stopped at epoch 5 with val_loss 2.30").
+- `best_val_loss` is **accumulated state**: it tracks the lowest val_loss seen across all *prior* epochs. If you don't restore it on resume, the first resumed epoch starts with `best_val_loss = inf`, trivially "beats" it, and overwrites `best.pt` — even if that epoch's val_loss is worse than what you had before the crash.
 
 Two files saved to `transformer/checkpoints/`:
 
@@ -840,6 +861,78 @@ Epoch 5/30:  63%|████████████▌       | 779/1237 [01:27
 
 ---
 
+# TensorBoard Logging — Visualizing Training
+
+The `writer` argument (a `torch.utils.tensorboard.SummaryWriter`) is the **only** part of the training loop that touches an external system. It's optional — pass `None` and training runs identically without writing event files.
+
+`train.py` instantiates one writer per run, pointed at `paths.log_dir` from the YAML, and threads it into `train()`:
+
+```python
+# train.py
+writer = SummaryWriter(log_dir=config.paths.log_dir)
+try:
+    train(..., writer=writer)
+finally:
+    writer.close()    # flushes any buffered events to disk
+```
+
+## What gets logged
+
+| Tag                | Frequency  | Step axis                  | What it shows                       |
+|--------------------|------------|----------------------------|-------------------------------------|
+| `train/loss_step`  | every batch| `scheduler.last_epoch`     | Per-batch loss — noisy but granular |
+| `train/lr`         | every batch| `scheduler.last_epoch`     | Warmup ramp → decay (Section 5.3)   |
+| `train/loss_epoch` | every epoch| `epoch`                    | Smoothed train loss for comparison  |
+| `val/loss_epoch`   | every epoch| `epoch`                    | Validation loss — overfitting watch |
+
+**Why two step axes?** Per-step charts use the global optimizer step (`scheduler.last_epoch` — LambdaLR's public counter, incremented on every `.step()`). Per-epoch charts use the epoch number. TensorBoard groups tags by their numeric prefix (`train/`, `val/`), so they show up under collapsible sections in the UI.
+
+## Why log per-step LR
+
+The Transformer schedule (paper Section 5.3) is non-trivial:
+
+```
+lr = d_model^(-0.5) × min(step^(-0.5), step × warmup_steps^(-1.5))
+```
+
+The shape is unusual — linear ramp up to `warmup_steps`, then `step^(-0.5)` decay. If something is misconfigured (wrong `d_model`, wrong `warmup_steps`, scheduler not stepping), it's **invisible** at epoch granularity but obvious in a per-step chart:
+
+```
+lr
+ │       ╱╲
+ │      ╱  ╲___
+ │     ╱       ─────___
+ │    ╱                 ─────___
+ │   ╱
+ └─────────────────────────────── step
+     ↑
+   warmup_steps = 4000
+```
+
+Logging `train/lr` every step makes this curve visible — a sanity check that the scheduler is doing what the paper says.
+
+## Why log per-step loss AND per-epoch loss
+
+Per-step loss is **noisy** — one bad batch spikes it. Per-epoch loss is the **weighted average over all batches** (see [Loss Tracking](#loss-tracking--why-multiply-back-by-n_tokens)) — smoother, easier to read.
+
+Use the step chart to spot anomalies (loss spike at step 12,847?). Use the epoch chart to track real progress.
+
+## Viewing the logs
+
+```bash
+tensorboard --logdir logs/
+```
+
+Then open `http://localhost:6006`. Each run writes to its own subdir (`logs/base/`, `logs/tiny/`) — TensorBoard auto-detects all of them and lets you compare runs side-by-side.
+
+## Resume behavior
+
+When you resume from a checkpoint, the scheduler's `last_epoch` is restored — so per-step logging continues at the correct step number. The new event file appends to the existing `log_dir`. TensorBoard merges them transparently.
+
+If you want a clean break per run (e.g. for hyperparameter sweeps), point each run at a unique subdir like `logs/base/run_2026-04-25/`.
+
+---
+
 # Full Training Output — What You'll See
 
 ```
@@ -866,9 +959,12 @@ Epoch 30/30: 100%|███████████████████| 123
   Train Loss: 0.12 | Val Loss: 0.70
 
 Training complete. Best val loss: 0.4800
+Latest weights: checkpoints/last.pt
 ```
 
 30 epochs = ~30 lines of tqdm output + summary lines. Clean, readable, no noise.
+
+**Note on `last.pt`:** It's overwritten **silently every epoch** so you can resume after a crash from any point. The final summary line just tells you where to find the latest weights on disk — it's not a special end-of-training save. If training crashes at, say, epoch 17, the summary lines don't appear, but `last.pt` already holds the epoch 17 weights from the silent save at the end of that epoch — exactly what you need to resume.
 
 ---
 

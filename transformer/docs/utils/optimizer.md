@@ -443,12 +443,18 @@ schedule2(100)   # uses 1024 — different config, same interface
 ## `build_optimizer`
 
 ```python
-def build_optimizer(model: nn.Module, d_model: int, warmup_steps: int = 4000) -> tuple:
+def build_optimizer(
+    model: nn.Module,
+    d_model: int,
+    betas: tuple = (0.9, 0.98),
+    eps: float = 1e-9,
+    warmup_steps: int = 4000,
+) -> tuple:
     optimizer = Adam(
         params=model.parameters(),
         lr=1.0,
-        betas=(0.9, 0.98),
-        eps=1e-9
+        betas=tuple(betas),
+        eps=eps
     )
     scheduler = LambdaLR(optimizer, lr_lambda=TransformerScheduler(d_model, warmup_steps))
     return optimizer, scheduler

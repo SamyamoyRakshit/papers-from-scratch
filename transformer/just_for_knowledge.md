@@ -3,6 +3,7 @@
 2. [How the `forward` function in PyTorch returns `class` value when we do not call `forward`?](#2-how-the-forward-function-in-pytorch-returns-class-value-when-we-do-not-call-forward)
 3. [`hooks`](#3-hooks)
 4. [`torch.tensor` vs `torch.Tensor`](#4-torchtensor-vs-torchtensor)
+5. [Git hygiene: secrets, artifacts, and LFS](#5-git-hygiene-secrets-artifacts-and-lfs)
 
 
 ## 1. `nn.Parameter`: 
@@ -482,5 +483,150 @@ def forward(self, src: torch.Tensor) -> torch.Tensor:
 ### One-line summary
 
 **`torch.tensor` makes tensors. `torch.Tensor` describes them.**
+
+___
+
+## 5. Git hygiene: secrets, artifacts, and LFS
+
+Three closely-related ideas that together control **what enters your repo** — secrets (never), runtime artifacts (almost never), and large binaries (carefully, via LFS).
+
+---
+
+### 5.1 Secrets via `.env` + `python-dotenv`
+
+The problem: API tokens (HuggingFace, OpenAI, etc.) need to be in `os.environ` so libraries can pick them up — but they must **never** end up in git history.
+
+The pattern:
+
+1. Add a real values file at the repo root:
+
+   ```
+   # .env (gitignored)
+   HF_TOKEN=hf_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789
+   ```
+
+2. Load it at the very top of your entry script — **before any library imports that might read the env var**:
+
+   ```python
+   from dotenv import load_dotenv
+   load_dotenv()  # populates os.environ from .env
+
+   from datasets import load_dataset   # now sees HF_TOKEN
+   ```
+
+3. Ignore it in `.gitignore`:
+
+   ```
+   .env
+   .env.*
+   !.env.example
+   ```
+
+#### Why order matters
+
+`huggingface_hub` and `datasets` read `os.environ["HF_TOKEN"]` at import time / first call. If you call `load_dotenv()` *after* importing them, the token is loaded but the libraries already gave up on finding one — they treat you as anonymous and you hit the rate-limit warning.
+
+Mental model: `load_dotenv()` is a translator that copies `.env` → `os.environ`. Any code that reads `os.environ` *after* the translation sees the values. Anything that read it *before* does not.
+
+#### `.env.example` for open-source
+
+You commit a **template** (no secrets, just structure) so collaborators know what env vars to set:
+
+```
+# .env.example (committed)
+# HuggingFace read-only token — raises anonymous rate limit when fetching datasets.
+# Get one at https://huggingface.co/settings/tokens
+HF_TOKEN=
+```
+
+The `!.env.example` line in `.gitignore` *un-ignores* this one specific filename. Standard pattern: clone → `cp .env.example .env` → fill in real values.
+
+---
+
+### 5.2 Runtime artifacts: `checkpoints/`, `logs/`, etc.
+
+Anything **produced by running the code** generally shouldn't enter git:
+
+* `.pt` checkpoints (100s of MB each, churn every epoch)
+* TensorBoard `events.*` files
+* `train.log` per run
+* `__pycache__/`, `.ipynb_checkpoints/`
+
+Why: source repos describe **how to produce** outputs; they shouldn't *be* the outputs. Committing artifacts bloats clones, makes diffs noisy, and means every training run wants to be a commit.
+
+Pattern:
+
+```
+# .gitignore
+checkpoints/
+logs/
+```
+
+Patterns without a leading `/` match anywhere in the tree, so this covers `transformer/checkpoints/`, `ViT/checkpoints/`, etc.
+
+---
+
+### 5.3 `.gitattributes` (Git LFS) vs `.gitignore`
+
+The trick everyone trips on: **these two files do not conflict.** They answer different questions.
+
+| File | Question it answers | Triggered when |
+|---|---|---|
+| `.gitignore` | "Should git see this file at all?" | `git add` (silently skips ignored paths) |
+| `.gitattributes` | "**If** I commit this file, how should git store it?" | `git add` of a non-ignored file |
+
+So a typical setup looks like:
+
+```
+# .gitattributes — route any committed .pt through LFS, not regular git storage
+*.pt filter=lfs diff=lfs merge=lfs -text
+*.pth filter=lfs diff=lfs merge=lfs -text
+```
+
+```
+# .gitignore — don't let me commit checkpoint runs at all
+checkpoints/
+logs/
+```
+
+These work **together**:
+* `.gitignore` blocks accidental adds of every-epoch garbage in `checkpoints/`.
+* `.gitattributes` ensures that a *deliberately* committed `.pt` (e.g. `released/transformer-v1.pt`) goes to LFS, not bloat your regular pack files.
+
+LFS rules sit dormant for ignored paths and only fire when you knowingly add a file outside the ignore.
+
+#### Why LFS exists at all
+
+GitHub blocks single files >100 MB and warns at >50 MB. LFS replaces big files in the regular git history with tiny pointer files; the actual bytes live on a separate LFS server. Clones download pointers immediately and large files lazily — keeps regular git fast.
+
+But **LFS has its own quotas** (free tier: 1 GB storage, 1 GB/month bandwidth). Don't use it as an excuse to commit every checkpoint — be deliberate.
+
+---
+
+### 5.4 Untracking files already committed
+
+Adding a path to `.gitignore` only stops **new** tracking. Files already in the index stay tracked until you explicitly remove them:
+
+```bash
+git rm --cached transformer/checkpoints/best.pt transformer/checkpoints/last.pt
+git commit -m "Stop tracking checkpoint artifacts; rely on .gitignore"
+git push
+```
+
+* `--cached` means "remove from git's index, **keep the file on disk**." Local files survive; git just stops tracking them.
+* New clones won't pull these files anymore (they're no longer in HEAD).
+* History still contains them — old commits can still reference the LFS objects on the LFS server. Usually fine; running LFS garbage collection is rarely worth it for a few stragglers.
+
+Verify after:
+
+```bash
+git ls-files | grep checkpoints   # should print nothing
+```
+
+---
+
+### One-line summary
+
+**`.env` for secrets, `.gitignore` for artifacts, `.gitattributes` for LFS storage rules — and `git rm --cached` to clean up files you ignored too late.**
 
 ___

@@ -28,7 +28,13 @@ class TransformerScheduler:
         return self.d_model ** (-0.5) * min(step ** (-0.5), step * self.warmup_steps ** (-1.5))
     
 
-def build_optimizer(model: nn.Module, d_model: int, warmup_steps: int = 4000) -> tuple:
+def build_optimizer(
+    model: nn.Module,
+    d_model: int,
+    betas: tuple = (0.9, 0.98),
+    eps: float = 1e-9,
+    warmup_steps: int = 4000,
+) -> tuple:
     """
     Build Adam optimizer with Transformer learning rate schedule (Section 5.3).
 
@@ -38,6 +44,8 @@ def build_optimizer(model: nn.Module, d_model: int, warmup_steps: int = 4000) ->
     Args:
         model (nn.Module): The transformer model.
         d_model (int): Model dimension.
+        betas (tuple): Adam (β₁, β₂). Default: (0.9, 0.98).
+        eps (float): Adam ε. Default: 1e-9.
         warmup_steps (int): Number of warmup steps. Default is 4000.
 
     Returns:
@@ -46,8 +54,8 @@ def build_optimizer(model: nn.Module, d_model: int, warmup_steps: int = 4000) ->
     optimizer = Adam(
         params=model.parameters(),
         lr=1.0,             # placeholder — scheduler controls actual lr
-        betas=(0.9, 0.98),
-        eps=1e-9
+        betas=tuple(betas),
+        eps=eps
     )
 
     scheduler = LambdaLR(optimizer, lr_lambda=TransformerScheduler(d_model, warmup_steps))
