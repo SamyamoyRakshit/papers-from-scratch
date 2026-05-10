@@ -143,7 +143,7 @@ How to read it:
 - **`alt`** blocks = conditional branch (best-vs-not-best save).
 - Self-arrows (`train->>train`) = work done inside the same file (e.g., `get_git_hash()` is defined in `train.py`).
 
-The diagram renders natively in GitHub and VS Code's Markdown preview — no extension needed.
+The diagram renders natively in GitHub's Markdown preview — no extension needed.
 
 > *\* If your VS Code preview shows the raw mermaid source, install the **"Markdown Preview Mermaid Support"** extension (publisher: bierner) and reopen the preview.*
 
