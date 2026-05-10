@@ -22,10 +22,16 @@
    - [What Gets Saved](#what-gets-saved)
    - [Why Save Optimizer and Scheduler State](#why-save-optimizer-and-scheduler-state)
    - [Overfitting Detection — Train vs Val Loss](#overfitting-detection--train-vs-val-loss)
-10. [Progress Bar — tqdm](#progress-bar--tqdm)
-11. [TensorBoard Logging — Visualizing Training](#tensorboard-logging--visualizing-training)
-12. [Full Training Output — What You'll See](#full-training-output--what-youll-see)
-13. [References](#references)
+10. [Leaderboard + `best.pt` Symlink — Global Ranking Across Runs](#leaderboard--bestpt-symlink--global-ranking-across-runs)
+    - [Why a JSON Leaderboard](#why-a-json-leaderboard)
+    - [Sorting by val_loss, not Run Name](#sorting-by-val_loss-not-run-name)
+    - [The Parent-Level `best.pt` Symlink](#the-parent-level-bestpt-symlink)
+    - [Why the Symlink Target Is Relative](#why-the-symlink-target-is-relative)
+    - [Worked Example — Three Runs](#worked-example--three-runs)
+11. [Progress Bar — tqdm](#progress-bar--tqdm)
+12. [TensorBoard Logging — Visualizing Training](#tensorboard-logging--visualizing-training)
+13. [Full Training Output — What You'll See](#full-training-output--what-youll-see)
+14. [References](#references)
 
 ---
 
@@ -743,17 +749,19 @@ checkpoint = {
 - `train_loss` / `val_loss` are recomputed every epoch by `train_on_epoch()` / `validate()` — they're outputs, not inputs to the next epoch. They're saved purely so `train.py` can print them when resuming ("you stopped at epoch 5 with val_loss 2.30").
 - `best_val_loss` is **accumulated state**: it tracks the lowest val_loss seen across all *prior* epochs. If you don't restore it on resume, the first resumed epoch starts with `best_val_loss = inf`, trivially "beats" it, and overwrites `best.pt` — even if that epoch's val_loss is worse than what you had before the crash.
 
-Two files saved to `transformer/checkpoints/`:
+Two files saved per run, inside the run's own timestamped subdir:
 
 ```
-best.pt  — model with lowest validation loss (for inference)
-           Only overwritten when a NEW best val_loss is found.
-
-last.pt  — model from the most recent epoch (for resuming training)
-           Overwritten EVERY epoch.
+transformer/checkpoints/<preset>/run_<timestamp>/
+├── best.pt  — model with lowest validation loss (for inference)
+│              Only overwritten when a NEW best val_loss is found.
+└── last.pt  — model from the most recent epoch (for resuming training)
+               Overwritten EVERY epoch.
 ```
 
-Example over 30 epochs:
+Each invocation of `train.py` writes to its own `run_<timestamp>/` so prior runs are never clobbered — see [`docs/scripts/train.md`](../scripts/train.md#on-disk-layout--per-run-timestamped-subdirs) for the full layout. A *parent-level* `best.pt` symlink (one directory up) tracks the global best across **all** runs — covered in [Leaderboard + `best.pt` Symlink](#leaderboard--bestpt-symlink--global-ranking-across-runs) below.
+
+Example over 30 epochs (single run):
 
 ```
 Epoch 1:  val_loss = 2.50 → best! save best.pt ✓    save last.pt (epoch 1)
@@ -765,8 +773,8 @@ Epoch 20: val_loss = 0.60 → worse, skip              save last.pt (epoch 20)
 Epoch 30: val_loss = 0.70 → worse, skip              save last.pt (epoch 30)
 
 After training:
-  best.pt = epoch 15 weights (val_loss = 0.48)
-  last.pt = epoch 30 weights (val_loss = 0.70)
+  run_<ts>/best.pt = epoch 15 weights (val_loss = 0.48)
+  run_<ts>/last.pt = epoch 30 weights (val_loss = 0.70)
 ```
 
 ## Why Save Optimizer and Scheduler State
@@ -834,6 +842,154 @@ loss
 ```
 
 This is why we save `best.pt` based on **validation loss**, not training loss — training loss always decreases, but validation loss shows when the model stops generalizing.
+
+---
+
+# Leaderboard + `best.pt` Symlink — Global Ranking Across Runs
+
+Each invocation of `train.py` writes to its **own** `run_<timestamp>/` subdir (see [`docs/scripts/train.md`](../scripts/train.md#on-disk-layout--per-run-timestamped-subdirs)). That solves "don't clobber prior runs" — but creates a new question: **after 20 runs, which run is the best?** That's what `_update_leaderboard` ([`utils/train_utils.py:17-43`](../../utils/train_utils.py#L17-L43)) answers.
+
+It runs **only when** the current run sets a new in-run best (i.e. inside `if improved:` in `train()`):
+
+```python
+# train_utils.py:298-302
+parent_dir = os.path.dirname(checkpoint_dir.rstrip(os.sep))
+run_name   = os.path.basename(checkpoint_dir.rstrip(os.sep))
+_update_leaderboard(parent_dir, run_name, val_loss)
+```
+
+If `checkpoint_dir = "transformer/checkpoints/tiny/run_2026-05-02_09-18-20"`, then:
+
+```
+parent_dir = "transformer/checkpoints/tiny"
+run_name   = "run_2026-05-02_09-18-20"
+```
+
+`_update_leaderboard` writes two things into `parent_dir`:
+
+```
+transformer/checkpoints/tiny/
+├── leaderboard.json    ← all runs, sorted ascending by val_loss
+├── best.pt             ← symlink → run_<best>/best.pt
+└── run_<ts>/...
+```
+
+## Why a JSON Leaderboard
+
+Without it: "which run was best?" means `ls -la` plus reading every `train.log` plus `torch.load(...)["val_loss"]` on each `best.pt`. With it: `cat leaderboard.json` and the answer is the first line.
+
+It's deliberately **not** a database, csv, or sqlite — JSON is `cat`-friendly, diff-friendly in PRs, and trivially parsed in any tool you might want to plug in later.
+
+## Sorting by val_loss, not Run Name
+
+Default `json.dump(sort_keys=True)` would sort **alphabetically by run name** — which is just chronological by timestamp. That's useless for ranking. We sort the dict by value before dumping:
+
+```python
+# train_utils.py:32-36
+board[run_name] = val_loss
+# Sort ascending by val_loss so the file reads top-down as a ranking.
+board = dict(sorted(board.items(), key=lambda kv: kv[1]))
+with open(leaderboard_path, "w") as f:
+    json.dump(board, f, indent=2)         # NOTE: no sort_keys=True
+```
+
+`dict(sorted(...))` works because Python dicts preserve **insertion order** since 3.7 — and `json.dump` walks the dict in iteration order. The sort key `lambda kv: kv[1]` picks the value (val_loss), not the key (run name).
+
+```
+Alphabetical (what you DON'T want):     Ranked (what you DO want):
+{                                        {
+  "run_2026-05-01_23-01-24": 13.74,        "run_2026-05-02_09-18-20": 8.38,    ← #1
+  "run_2026-05-02_00-02-10": 10.72,        "run_2026-05-02_00-02-10": 10.72,   ← #2
+  "run_2026-05-02_09-18-20":  8.38         "run_2026-05-01_23-01-24": 13.74    ← #3
+}                                        }
+```
+
+## The Parent-Level `best.pt` Symlink
+
+After the JSON write, the parent's `best.pt` is repointed at whichever run is currently #1:
+
+```python
+# train_utils.py:38-43
+best_run = next(iter(board))                       # first key = best (board is sorted)
+symlink  = os.path.join(parent_dir, "best.pt")
+target   = os.path.join(best_run, "best.pt")       # relative target
+if os.path.islink(symlink) or os.path.exists(symlink):
+    os.unlink(symlink)
+os.symlink(target, symlink)
+```
+
+`next(iter(board))` is faster + clearer than `min(board, key=board.get)`: the dict is already sorted ascending, so the first key *is* the minimum. No second pass.
+
+The `if os.path.islink(...) or os.path.exists(...)` matters because `os.symlink()` won't overwrite an existing path — it raises `FileExistsError`. Both branches are needed:
+
+| Check | Catches |
+|---|---|
+| `os.path.islink(symlink)` | An existing symlink (even a broken one pointing at a deleted target) |
+| `os.path.exists(symlink)` | A regular file at that path (e.g. user dropped a real `best.pt` here) |
+
+Why both? `os.path.exists` follows symlinks — if the symlink is **broken** (target deleted), `exists` returns `False` and the symlink would be missed. `islink` catches that case.
+
+## Why the Symlink Target Is Relative
+
+```python
+target = os.path.join(best_run, "best.pt")
+# "run_2026-05-02_09-18-20/best.pt"           ← relative
+# NOT: "/Users/.../checkpoints/tiny/run_.../best.pt"   ← absolute would break on move
+```
+
+If the symlink stored an absolute path and you later did:
+
+```bash
+mv transformer/checkpoints /backup/checkpoints
+```
+
+the symlink would still point at `/Users/.../transformer/checkpoints/...` — broken. With a relative target, the symlink resolves correctly inside whichever directory contains it. The whole `checkpoints/` tree stays portable.
+
+## Worked Example — Three Runs
+
+State after three sequential runs of `train.py --config configs/tiny.yaml`:
+
+```
+transformer/checkpoints/tiny/
+├── best.pt → run_2026-05-02_09-18-20/best.pt           ← symlink
+├── leaderboard.json
+├── run_2026-05-01_23-01-24/    (val_loss = 13.74 — first attempt, worst)
+│   ├── config.yaml
+│   ├── best.pt
+│   └── last.pt
+├── run_2026-05-02_00-02-10/    (val_loss = 10.72 — second attempt)
+│   ├── config.yaml
+│   ├── best.pt
+│   └── last.pt
+└── run_2026-05-02_09-18-20/    (val_loss =  8.38 — third attempt, best)
+    ├── config.yaml
+    ├── best.pt
+    └── last.pt
+```
+
+`leaderboard.json`:
+
+```json
+{
+  "run_2026-05-02_09-18-20": 8.381439906912544,
+  "run_2026-05-02_00-02-10": 10.720611978476489,
+  "run_2026-05-01_23-01-24": 13.740403213079851
+}
+```
+
+Loading the global best from anywhere:
+
+```python
+import torch
+ckpt = torch.load("transformer/checkpoints/tiny/best.pt", weights_only=True)
+# Symlink resolves transparently — torch.load doesn't care it's a symlink.
+print(ckpt["val_loss"])   # → 8.381...
+print(ckpt["git_hash"])   # → which commit produced these weights
+```
+
+Inference / evaluation scripts can hardcode `checkpoints/tiny/best.pt` — they never need to know which run won.
+
+**Why no comment in `leaderboard.json` documenting the sort order?** JSON spec doesn't allow comments — `//` or `#` would crash `json.load`. The single-line comment in the writer (`train_utils.py:33`) serves as documentation for the only function that produces this file.
 
 ---
 
@@ -920,16 +1076,14 @@ Use the step chart to spot anomalies (loss spike at step 12,847?). Use the epoch
 ## Viewing the logs
 
 ```bash
-tensorboard --logdir logs/
+tensorboard --logdir transformer/logs/tiny     # (or /base, /experiment1_wmt, ...)
 ```
 
-Then open `http://localhost:6006`. Each run writes to its own subdir (`logs/base/`, `logs/tiny/`) — TensorBoard auto-detects all of them and lets you compare runs side-by-side.
+Then open `http://localhost:6006`. Every invocation of `train.py` writes to its own `run_<timestamp>/` subdir under the preset's log dir — TensorBoard auto-discovers all of them and shows each run as a separate line on every chart, so runs are directly comparable in one view. See [`docs/scripts/train.md`](../scripts/train.md#tensorboard--reading-the-event-files) for screenshots and a walkthrough of reading the four logged tags.
 
 ## Resume behavior
 
-When you resume from a checkpoint, the scheduler's `last_epoch` is restored — so per-step logging continues at the correct step number. The new event file appends to the existing `log_dir`. TensorBoard merges them transparently.
-
-If you want a clean break per run (e.g. for hyperparameter sweeps), point each run at a unique subdir like `logs/base/run_2026-04-25/`.
+`--resume` starts a **new** run subdir with a fresh timestamp — the old run's tfevents file is left untouched. Because the scheduler's `last_epoch` is restored from the checkpoint, the new run's `train/loss_step` and `train/lr` continue from the correct step number, so the two runs together form a continuous curve when both are visible in TensorBoard.
 
 ---
 
@@ -938,17 +1092,17 @@ If you want a clean break per run (e.g. for hyperparameter sweeps), point each r
 ```
 Epoch 1/30: 100%|████████████████████| 1237/1237 [02:15<00:00, loss=2.34, lr=1.42e-04]
   Train Loss: 2.34 | Val Loss: 2.50
-  Saved best model (val_loss: 2.5000) -> checkpoints/best.pt
+  Saved best model (val_loss: 2.5000) -> checkpoints/base/run_2026-05-02_09-18-20/best.pt
 
 Epoch 2/30: 100%|████████████████████| 1237/1237 [02:14<00:00, loss=1.80, lr=2.10e-04]
   Train Loss: 1.80 | Val Loss: 1.90
-  Saved best model (val_loss: 1.9000) -> checkpoints/best.pt
+  Saved best model (val_loss: 1.9000) -> checkpoints/base/run_2026-05-02_09-18-20/best.pt
 
 ...
 
 Epoch 15/30: 100%|███████████████████| 1237/1237 [02:13<00:00, loss=0.45, lr=1.80e-04]
   Train Loss: 0.45 | Val Loss: 0.48
-  Saved best model (val_loss: 0.4800) -> checkpoints/best.pt
+  Saved best model (val_loss: 0.4800) -> checkpoints/base/run_2026-05-02_09-18-20/best.pt
 
 Epoch 16/30: 100%|███████████████████| 1237/1237 [02:13<00:00, loss=0.40, lr=1.70e-04]
   Train Loss: 0.40 | Val Loss: 0.52
@@ -959,7 +1113,7 @@ Epoch 30/30: 100%|███████████████████| 123
   Train Loss: 0.12 | Val Loss: 0.70
 
 Training complete. Best val loss: 0.4800
-Latest weights: checkpoints/last.pt
+Latest weights: checkpoints/base/run_2026-05-02_09-18-20/last.pt
 ```
 
 30 epochs = ~30 lines of tqdm output + summary lines. Clean, readable, no noise.

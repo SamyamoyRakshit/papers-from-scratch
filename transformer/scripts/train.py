@@ -4,18 +4,18 @@ Training script for the Transformer model.
 Usage:
     python -m transformer.scripts.train                          # uses base.yaml
     python -m transformer.scripts.train --config configs/tiny.yaml
-    python -m transformer.scripts.train --resume checkpoints/last.pt
+    python -m transformer.scripts.train --resume checkpoints/tiny/run_<ts>/last.pt
 """
-from dotenv import load_dotenv
-load_dotenv()
-
 import argparse
+import hashlib
 import logging
 import os
 import shutil
 import subprocess
 from pathlib import Path
 from datetime import datetime
+
+from dotenv import load_dotenv
 
 import torch
 from datasets import load_dataset
@@ -37,13 +37,55 @@ logger = logging.getLogger(__name__)
 
 
 def get_git_hash() -> str:
-    """Return current git commit hash for run provenance, or 'unknown' if not in a repo."""
+    """
+    Return current git commit hash for run provenance, or 'unknown' if not in a repo.
+
+    Appends '-dirty' if the working tree has uncommitted changes — otherwise
+    a clean-looking hash would lie about which code actually produced the run.
+    """
     try:
-        return subprocess.check_output(
+        commit = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
         ).decode().strip()
+        # `git status --porcelain` prints one line per modified/untracked file;
+        # empty output ⇒ clean working tree.
+        dirty = subprocess.check_output(
+            ["git", "status", "--porcelain"], stderr=subprocess.DEVNULL
+        ).decode().strip()
+        return f"{commit}-dirty" if dirty else commit
     except (subprocess.CalledProcessError, FileNotFoundError):
         return "unknown"
+
+
+def sha256_file(path: str) -> str:
+    """SHA-256 of a file's bytes — used to pin the tokenizer to a checkpoint."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 16), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def compute_data_fingerprint(dataset, dataset_name: str) -> str:
+    """
+    Deterministic fingerprint of a HuggingFace dataset slice — pins training
+    data identity to a checkpoint.
+
+    Hashes (dataset name, length, content of first / middle / last rows). Any
+    change to shuffle, max_rows, seed, or the underlying dataset version flips
+    at least one of these, so a stale resume against re-sliced data fails fast.
+    Sampling 3 rows is cheap and catches the common "I changed the slice"
+    mistake without iterating millions of pairs.
+    """
+    import json
+    h = hashlib.sha256()
+    h.update(dataset_name.encode())
+    h.update(str(len(dataset)).encode())
+    indices = [0, len(dataset) // 2, len(dataset) - 1]
+    for i in indices:
+        row = dataset[i]
+        h.update(json.dumps(row, sort_keys=True, ensure_ascii=False).encode())
+    return h.hexdigest()
 
 
 def get_device(device_config: str) -> torch.device:
@@ -73,7 +115,9 @@ def warn_if_config_diverges(snapshot_path: str, current: Config) -> None:
 
     def walk(a, b, prefix: str = "") -> None:
         if isinstance(a, dict) and isinstance(b, dict):
-            for k in set(a) | set(b):
+            # sorted() so warnings appear in stable, alphabetical order across runs —
+            # plain set iteration is hash-randomized.
+            for k in sorted(set(a) | set(b)):
                 walk(a.get(k), b.get(k), f"{prefix}.{k}" if prefix else k)
         elif a != b and prefix not in _RESUME_SAFE_KEYS:
             risky.append(f"  {prefix}: {a!r} -> {b!r}")
@@ -87,6 +131,10 @@ def warn_if_config_diverges(snapshot_path: str, current: Config) -> None:
 
 
 def main():
+    # Load .env (e.g. HF_TOKEN for gated datasets) — kept inside main() so
+    # importing this module doesn't trigger filesystem reads as a side effect.
+    load_dotenv()
+
     # --- CLI args ---
     parser = argparse.ArgumentParser(description="Train the Transformer model")
     # Default resolved relative to this file, not CWD — so `python -m ...` works from anywhere.
@@ -94,7 +142,7 @@ def main():
     parser.add_argument("--config", type=str, default=str(default_config),
                         help="Path to config YAML file")
     parser.add_argument("--resume", type=str, default=None,
-                        help="Path to checkpoint to resume training from (e.g. checkpoints/base/last.pt)")
+                        help="Path to checkpoint to resume training from (e.g. checkpoints/base/run_<ts>/last.pt)")
     args = parser.parse_args()
 
     # --- Load config ---
@@ -141,7 +189,14 @@ def main():
         device = get_device(config.device)
         logger.info(f"Using device: {device}")
 
-        # --- Load dataset (reused by tokenizer + dataloaders) ---
+        # --- Tokenizer path (resolved up front so preflight + tokenizer block share it) ---
+        tokenizer_path = config.paths.tokenizer_path                 # e.g. "transformer/tokenizer/base/sp.model"
+        # SentencePiece always writes {prefix}.model, so tokenizer_path must end in .model
+        # — otherwise os.path.exists below misses it and we retrain every run.
+        assert tokenizer_path.endswith(".model"), f"tokenizer_path must end in .model, got {tokenizer_path}"
+        model_prefix = tokenizer_path.removesuffix(".model")         # e.g. "transformer/tokenizer/base/sp"
+
+        # --- Load dataset (reused by tokenizer + dataloaders + resume preflight) ---
         logger.info("Loading dataset...")
         raw_dataset = load_dataset(
             path=config.data.dataset,
@@ -149,25 +204,88 @@ def main():
             split="train"
         )
 
-        # Cap dataset size — e.g. 500K out of 8.5M pairs for practical training time on M1
+        # Cap dataset size — e.g. 500K out of 8.5M pairs for practical training time on M1.
+        # Shuffle before slicing: Samanantar concatenates per-source corpora, so the first N rows
+        # would be one domain (PMIndia, Wikipedia, ...). Seeded shuffle keeps the slice
+        # representative AND reproducible — same seed → same N rows.
         if config.data.max_rows is not None:
-            raw_dataset = raw_dataset.select(
+            raw_dataset = raw_dataset.shuffle(seed=seed).select(
                 range(min(config.data.max_rows, len(raw_dataset)))
             )
         logger.info(f"Dataset size: {len(raw_dataset)} pairs")
 
+        # Fingerprint the resolved data slice. Pinned to the checkpoint so a resume
+        # against a shifted slice (shuffle added, max_rows changed, dataset re-uploaded)
+        # fails fast — tokenizer hash alone can't catch this.
+        data_fingerprint = compute_data_fingerprint(raw_dataset, config.data.dataset)
+        logger.info(f"Data fingerprint: {data_fingerprint[:12]}...")
+
+        # --- Resume preflight (fail fast on tokenizer / data / config mismatch) ---
+        # All resume validation lives here, BEFORE tokenizer-train / dataloader-build /
+        # model-alloc. Mismatches surface in seconds (after dataset load, which is cached
+        # after the first run anyway).
+        checkpoint = None         # populated if resuming; reused in restore block below
+        tokenizer_sha256 = None   # hashed here on resume, after train_tokenizer otherwise
+        if args.resume:
+            if not os.path.exists(args.resume):
+                raise FileNotFoundError(f"Checkpoint not found: {args.resume}")
+            if not os.path.exists(tokenizer_path):
+                # A fresh tokenizer would have different vocab IDs and silently
+                # mismatch the saved embeddings.
+                raise FileNotFoundError(f"Resume requires existing tokenizer at {tokenizer_path}")
+
+            logger.info(f"Resuming from {args.resume}...")
+
+            tokenizer_sha256 = sha256_file(tokenizer_path)
+            checkpoint = load_checkpoint(args.resume, device)
+
+            # Tokenizer integrity — same path may now hold a retrained tokenizer
+            # with different vocab IDs. Pre-hash checkpoints get a warning, not an error.
+            ckpt_tok_hash = checkpoint.get("tokenizer_sha256")
+            if ckpt_tok_hash is None:
+                logger.warning(
+                    "Checkpoint has no tokenizer_sha256 (pre-hash run) — "
+                    "cannot verify tokenizer integrity. Continuing."
+                )
+            elif ckpt_tok_hash != tokenizer_sha256:
+                raise RuntimeError(
+                    f"Tokenizer mismatch on resume:\n"
+                    f"  checkpoint expects sha256={ckpt_tok_hash}\n"
+                    f"  current   tokenizer  sha256={tokenizer_sha256}\n"
+                    f"  path: {tokenizer_path}\n"
+                    f"Embeddings would be loaded against a different vocab. "
+                    f"Restore the original tokenizer or train a fresh model."
+                )
+
+            # Data continuity — same tokenizer file is fine against any data, so we
+            # also pin the resolved data slice. Catches shuffle/max_rows/dataset drift.
+            ckpt_data_fp = checkpoint.get("data_fingerprint")
+            if ckpt_data_fp is None:
+                logger.warning(
+                    "Checkpoint has no data_fingerprint (pre-fingerprint run) — "
+                    "cannot verify data continuity. Continuing."
+                )
+            elif ckpt_data_fp != data_fingerprint:
+                raise RuntimeError(
+                    f"Data slice mismatch on resume:\n"
+                    f"  checkpoint trained against fingerprint={ckpt_data_fp}\n"
+                    f"  current  data slice    fingerprint={data_fingerprint}\n"
+                    f"The data slice has changed since this checkpoint was saved "
+                    f"(shuffle, max_rows, seed, or upstream dataset version differs). "
+                    f"Resuming would fine-tune on a different distribution. "
+                    f"Either revert your data-selection code, or train fresh without --resume."
+                )
+
+            # Snapshot lives next to the checkpoint being resumed (in its run_<ts>/ dir),
+            # not at the parent — each run owns its own config.yaml.
+            snapshot_path = os.path.join(os.path.dirname(args.resume), "config.yaml")
+            warn_if_config_diverges(snapshot_path, config)
+
         # --- Tokenizer (train if missing, else load) ---
-        tokenizer_path = config.paths.tokenizer_path                 # e.g. "transformer/tokenizer/base/sp.model"
-        model_prefix = tokenizer_path.removesuffix(".model")         # e.g. "transformer/tokenizer/base/sp"
+        # Resume case is filtered out by the preflight above — only fresh runs hit train_tokenizer.
         if os.path.exists(tokenizer_path):
             logger.info("Loading existing tokenizer...")
             sp = load_tokenizer(tokenizer_path)
-        elif args.resume:
-            # Resume must use the original tokenizer — a fresh one would have
-            # different vocab IDs, silently mismatching the saved embeddings.
-            raise FileNotFoundError(
-                f"Resume requires existing tokenizer at {tokenizer_path}"
-            )
         else:
             logger.info("Training tokenizer...")
             sp = train_tokenizer(
@@ -180,6 +298,12 @@ def main():
                 model_prefix=model_prefix
             )
         logger.info(f"Vocabulary size: {sp.vocab_size()}")
+
+        # Hash the tokenizer file so future runs can verify resumes against it.
+        # Skipped on resume — preflight already computed it above.
+        if tokenizer_sha256 is None:
+            tokenizer_sha256 = sha256_file(tokenizer_path)
+        logger.info(f"Tokenizer sha256: {tokenizer_sha256[:12]}...")
 
         # --- DataLoaders ---
         logger.info("Creating dataloaders...")
@@ -222,22 +346,13 @@ def main():
             warmup_steps=config.training.warmup_steps,
         )
 
-        # --- Resume from checkpoint ---
-        # Defaults for a fresh run; overwritten below if --resume is passed.
+        # --- Resume from checkpoint (state restoration) ---
+        # Validation + checkpoint loading happened in the preflight above.
+        # Here we just restore the actual training state into the freshly built
+        # model/optimizer/scheduler.
         start_epoch = 1
         best_val_loss = float("inf")
         if args.resume:
-            if not os.path.exists(args.resume):
-                raise FileNotFoundError(f"Checkpoint not found: {args.resume}")
-            logger.info(f"Resuming from {args.resume}...")
-
-            # Snapshot lives next to the checkpoint being resumed (in its run_<ts>/ dir),
-            # not at the parent — each run owns its own config.yaml.
-            snapshot_path = os.path.join(os.path.dirname(args.resume), "config.yaml")
-            warn_if_config_diverges(snapshot_path, config)
-
-            checkpoint = load_checkpoint(args.resume, device)
-
             model.load_state_dict(checkpoint["model_state_dict"])
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
             scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
@@ -285,6 +400,8 @@ def main():
                 start_epoch=start_epoch,
                 best_val_loss=best_val_loss,
                 git_hash=git_hash,
+                tokenizer_sha256=tokenizer_sha256,
+                data_fingerprint=data_fingerprint,
                 writer=writer,
             )
         finally:

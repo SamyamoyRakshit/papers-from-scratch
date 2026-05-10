@@ -22,7 +22,7 @@ model:
 training:
   max_tokens_per_batch: 2000   # Small batches for fast iteration
   max_seq_len: 64              # Short sequences
-  num_epochs: 5                # Few epochs — just checking if loss goes down
+  num_epochs: 7 #5                # Few epochs — just checking if loss goes down
   label_smoothing: 0.1         # Paper: 0.1, Section 5.4 (same as paper ✓)
   warmup_steps: 400            # Shorter warmup for fewer steps
   clip_grad_norm: 1.0          # Max gradient norm — not in paper, safety net against exploding gradients

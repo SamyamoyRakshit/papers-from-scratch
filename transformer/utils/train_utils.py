@@ -30,10 +30,12 @@ def _update_leaderboard(parent_dir: str, run_name: str, val_loss: float) -> None
             board = json.load(f)
 
     board[run_name] = val_loss
+    # Sort ascending by val_loss so the file reads top-down as a ranking.
+    board = dict(sorted(board.items(), key=lambda kv: kv[1]))
     with open(leaderboard_path, "w") as f:
-        json.dump(board, f, indent=2, sort_keys=True)
+        json.dump(board, f, indent=2)
 
-    best_run = min(board, key=board.get)
+    best_run = next(iter(board))
     symlink = os.path.join(parent_dir, "best.pt")
     target = os.path.join(best_run, "best.pt")  # relative -> portable across moves
     if os.path.islink(symlink) or os.path.exists(symlink):
@@ -220,6 +222,8 @@ def train(
         start_epoch: int = 1,
         best_val_loss: float = float("inf"),
         git_hash: str = "unknown",
+        tokenizer_sha256: str = "unknown",
+        data_fingerprint: str = "unknown",
         writer: SummaryWriter | None = None,
 ) -> None:
     """
@@ -285,6 +289,8 @@ def train(
             'val_loss': val_loss,
             'best_val_loss': best_val_loss,
             'git_hash': git_hash,                    # commit that produced these weights
+            'tokenizer_sha256': tokenizer_sha256,    # pins these embeddings to a specific tokenizer
+            'data_fingerprint': data_fingerprint,    # pins these weights to a specific data slice
         }
 
         # Save best model
