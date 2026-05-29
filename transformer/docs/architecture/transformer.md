@@ -15,7 +15,8 @@
 3. [What if `src_vocab_size != tgt_vocab_size`?](#what-if-src_vocab_size--tgt_vocab_size)
 5. [Why Shared PositionalEncoding Works](#why-shared-positionalencoding-works)
 6. [Why Return Logits, Not Softmax](#why-return-logits-not-softmax)
-7. [End-to-End Mathematical Trace — Full Transformer Forward Pass](#end-to-end-mathematical-trace--full-transformer-forward-pass)
+7. [Inference Helpers — `run_encoder_stack` / `run_decoder_stack`](#inference-helpers--run_encoder_stack--run_decoder_stack)
+8. [End-to-End Mathematical Trace — Full Transformer Forward Pass](#end-to-end-mathematical-trace--full-transformer-forward-pass)
 
 ---
 
@@ -499,6 +500,36 @@ logits = model(src, tgt)
 probs = torch.softmax(logits[:, -1, :], dim=-1)    # last position
 next_token = probs.argmax(dim=-1)                    # greedy decoding
 ```
+
+---
+
+# Inference Helpers — `run_encoder_stack` / `run_decoder_stack`
+
+Translation is autoregressive: tokens are generated one at a time. The source, however, is fixed for the whole decode — the encoder output (`memory`) never changes. Calling `forward()` inside the decode loop would re-run the encoder on every step for no reason.
+
+The model exposes two helpers that split the same pipeline as `forward()`:
+
+```python
+# Called ONCE before the decode loop
+memory = model.run_encoder_stack(src, src_mask)        # (batch, src_len, d_model)
+
+# Called per generated token
+logits = model.run_decoder_stack(tgt, memory, tgt_mask, memory_mask)
+                                                       # (batch, tgt_len, tgt_vocab_size)
+```
+
+Same embed → PE → encoder / decoder → projection math as `forward()` — just split so the encoder cost is paid once instead of `O(T)` times.
+
+```
+forward()  (training):              run_encoder_stack + run_decoder_stack (inference):
+    src ─► embed+PE ─► encoder ─┐       src ─► embed+PE ─► encoder ─► memory   (once)
+                                │                                       │
+    tgt ─► embed+PE ─► decoder ─┴─► proj ─► logits                      │
+                                                                        ▼
+                                        tgt ─► embed+PE ─► decoder ─► proj ─► logits  (per step)
+```
+
+Names avoid collisions with `self.encoder` / `self.decoder` (the submodules) and `data_utils.encode` / `decode` (the tokenizer functions).
 
 ---
 

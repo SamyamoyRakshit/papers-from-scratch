@@ -80,6 +80,20 @@ class PathsConfig(_Strict):
     tokenizer_path: str
 
 
+class InferenceConfig(_Strict):
+    beam_size: int
+    length_penalty: float
+
+    @model_validator(mode="after")
+    def _check(self):
+        assert self.beam_size >= 1, f"beam_size must be >= 1, got {self.beam_size}"
+        # α=0 disables the penalty (length^0 = 1); α<0 would invert it and reward
+        # shorter outputs — almost certainly a typo, so block it.
+        assert self.length_penalty >= 0.0, \
+            f"length_penalty must be >= 0, got {self.length_penalty}"
+        return self
+
+
 class Config(_Strict):
     model: ModelConfig
     training: TrainingConfig
@@ -87,6 +101,7 @@ class Config(_Strict):
     data: DataConfig
     tokens: TokensConfig
     paths: PathsConfig
+    inference: InferenceConfig
     seed: int
     device: str
 

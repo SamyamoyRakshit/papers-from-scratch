@@ -4,6 +4,7 @@
 3. [`hooks`](#3-hooks)
 4. [`torch.tensor` vs `torch.Tensor`](#4-torchtensor-vs-torchtensor)
 5. [Git hygiene: secrets, artifacts, and LFS](#5-git-hygiene-secrets-artifacts-and-lfs)
+6. [Post-Transformer architectures (FlashAttention, Linear Attention, Mamba)](#6-post-transformer-architectures-flashattention-linear-attention-mamba)
 
 
 ## 1. `nn.Parameter`: 
@@ -628,5 +629,88 @@ git ls-files | grep checkpoints   # should print nothing
 ### One-line summary
 
 **`.env` for secrets, `.gitignore` for artifacts, `.gitattributes` for LFS storage rules — and `git rm --cached` to clean up files you ignored too late.**
+
+___
+
+## 6. Post-Transformer architectures (FlashAttention, Linear Attention, Mamba)
+
+The "Attention Is All You Need" Transformer scales **quadratically** in sequence length: doubling `n` quadruples compute and activation memory ([why?](docs/utils/data_utils.md#why-not-max_seq_len--5000-then)). For our setup (`max_seq_len = 128`) that's a non-issue. But once context grows to 10K, 100K, or 1M tokens, the n² matrix becomes the dominant cost — and a whole line of research has grown up around getting past it.
+
+None of these are implemented in this repo. We're replicating the 2017 paper. Read this once, file it away.
+
+---
+
+### 6.1 FlashAttention (Dao et al., 2022)
+
+**Paper:** [FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness](https://arxiv.org/abs/2205.14135)
+
+**The idea:** same math as standard attention, but a smarter GPU memory access pattern. The full `(n, n)` score matrix never gets materialized in HBM (the slow GPU DRAM) — it's computed in tiles inside fast on-chip SRAM and the softmax is applied incrementally as those tiles stream through.
+
+**Result:** exact same outputs as standard attention, ~2-4× faster, and activation memory drops from O(n²) to O(n). A pure systems-level trick — no approximation, no quality loss. Now the default attention kernel in PyTorch (`F.scaled_dot_product_attention`), HuggingFace, vLLM, etc.
+
+**Takeaway:** for our 128-token setup, FlashAttention wouldn't change anything. But for any model training on long contexts, it's free performance.
+
+---
+
+### 6.2 Linear Attention
+
+**Paper (one of many):** [Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention](https://arxiv.org/abs/2006.16236) (Katharopoulos et al., 2020)
+
+**The idea:** the n² cost comes from `softmax(QK^T)V` — softmax forces you to materialize the full score matrix before normalizing. Replace softmax with a kernel function `φ` that lets you reassociate the multiplication:
+
+```
+softmax(QK^T) V        →    O(n²)   (must compute n×n first)
+(φ(Q) φ(K)^T) V        →    same shape, still n²
+φ(Q) (φ(K)^T V)        →    O(n)    ← reassociated! the inner product is (d, d)
+```
+
+By computing `φ(K)^T V` first (a small `d × d` matrix), you skip ever forming the n×n. Cost drops to O(n) in sequence length.
+
+**Trade-off:** approximation, not exact. Quality is typically a notch below softmax attention, though specific variants (Performer, Linformer, etc.) close the gap.
+
+**Takeaway:** scales beautifully to long sequences. But for translation-scale tasks (n < 200), the constant factor often makes full softmax attention faster *and* better-quality.
+
+---
+
+### 6.3 Mamba / State Space Models (2023)
+
+**Paper:** [Mamba: Linear-Time Sequence Modeling with Selective State Spaces](https://arxiv.org/abs/2312.00752) (Gu & Dao, 2023)
+
+**The idea:** drop attention entirely. Instead, use a **recurrent state** — a fixed-size hidden vector `h` that gets updated as each token streams in:
+
+```
+h_t = A · h_{t-1} + B · x_t     ← state update (matrix A learned, "selective")
+y_t = C · h_t                    ← output
+```
+
+This is the structure of an RNN, but with a clever parameterization (the "selective state space") that makes it: (a) trainable in parallel like a Transformer, (b) O(n) in sequence length, and (c) competitive with Transformers at small-to-mid scale.
+
+**Trade-off:** because `h` has a fixed size, the model has to *compress* the whole past into it — losing the perfect-recall property of attention. Empirically Mamba is strong on long-range tasks but mixed on tasks needing precise lookup over long context.
+
+**Takeaway:** an active research frontier. Hybrid architectures (Mamba + a few attention layers) are showing strong results. Worth watching, not replacing your understanding of Transformers.
+
+---
+
+### 6.4 When this matters for us
+
+| Setup | Sequence length | n² cost? | What to use |
+|---|---|---|---|
+| Our translation replication | n ≤ 128 | Trivial | Vanilla attention (the paper) |
+| Modern chat / code LLMs | n = 4K-32K | Painful | FlashAttention (almost universal now) |
+| Long-document / long-context | n = 100K+ | Prohibitive | FlashAttention + sparse / linear / SSM hybrids |
+
+For replicating "Attention Is All You Need" on 128-token sentences, none of this is needed.
+
+---
+
+### 6.5 Reading order if you want to go deeper
+
+1. **FlashAttention** — easiest to grok; same math, just systems. ([blog post](https://crfm.stanford.edu/2023/01/13/flashattention.html) is a gentler intro than the paper)
+2. **Linear Attention** — read [Transformers are RNNs](https://arxiv.org/abs/2006.16236) for the kernel trick; [Performer](https://arxiv.org/abs/2009.14794) for the random-feature variant
+3. **Mamba** — paper is dense; [this annotated walkthrough](https://srush.github.io/annotated-mamba/hard.html) by Sasha Rush is the gentlest start
+
+### One-line summary
+
+**The n² wall is real, but only at long context — FlashAttention is the universal default now, Linear Attention trades quality for speed, and Mamba ditches attention for a recurrent state.**
 
 ___

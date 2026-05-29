@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F  # for memory-efficient cross_entropy with label_smoothing
 
 
 class LabelSmoothedLoss(nn.Module):
@@ -53,32 +54,46 @@ class LabelSmoothedLoss(nn.Module):
         Returns:
             torch.Tensor: Scalar loss, normalized by the number of non-padding tokens.
         """
-        vocab_size = logits.size(-1)    # 16000 in our case (from vocab_size: 16000 in config).
+        # ORIGINAL — materializes a (batch*seq, vocab) fp32 smoothed-target
+        # tensor that OOMs on M1 with vocab=16000. Kept for reference.
+        # vocab_size = logits.size(-1)    # 16000 in our case (from vocab_size: 16000 in config).
+        #
+        # # log_softmax for KL divergence (KLDivLoss expects log-probabilities)
+        # log_probs = torch.log_softmax(logits, dim=-1)
+        #
+        # # Build smoothed target distribution
+        # # Start with smoothing / (vocab_size - 2):
+        # #   -2 because we exclude pad_idx (always 0) and correct token (gets confidence)
+        # smooth_value = self.smoothing / (vocab_size - 2)
+        # smoothed = torch.full_like(log_probs, smooth_value)
+        #
+        # # Set correct token positions to confidence value (0.9)
+        # smoothed.scatter_(1, target.unsqueeze(1), self.confidence)
+        #
+        # # Zero out padding positions — pad tokens shouldn't contribute to loss
+        # smoothed[:, self.pad_idx] = 0
+        #
+        # # Also zero out entire rows where target is padding
+        # pad_mask = target == self.pad_idx
+        # smoothed[pad_mask] = 0
+        #
+        # # Count non-padding tokens for normalization
+        # n_tokens = (~pad_mask).sum().item()
+        #
+        # # KL divergence
+        # loss = self.criterion(log_probs, smoothed)
+        #
+        # # Normalize by number of real tokens (not padding)
+        # return loss / n_tokens
 
-        # log_softmax for KL divergence (KLDivLoss expects log-probabilities)
-        log_probs = torch.log_softmax(logits, dim=-1)
-
-        # Build smoothed target distribution
-        # Start with smoothing / (vocab_size - 2):
-        #   -2 because we exclude pad_idx (always 0) and correct token (gets confidence)
-        smooth_value = self.smoothing / (vocab_size - 2)
-        smoothed = torch.full_like(log_probs, smooth_value)
-
-        # Set correct token positions to confidence value (0.9)
-        smoothed.scatter_(1, target.unsqueeze(1), self.confidence)
-
-        # Zero out padding positions — pad tokens shouldn't contribute to loss
-        smoothed[:, self.pad_idx] = 0
-
-        # Also zero out entire rows where target is padding
-        pad_mask = target == self.pad_idx
-        smoothed[pad_mask] = 0
-
-        # Count non-padding tokens for normalization
-        n_tokens = (~pad_mask).sum().item()
-
-        # KL divergence
-        loss = self.criterion(log_probs, smoothed)
-
-        # Normalize by number of real tokens (not padding)
-        return loss / n_tokens
+        # Equivalent math via F.cross_entropy — fused kernel, never materializes
+        # the smoothed target tensor. ignore_index excludes pad from both the loss
+        # and the mean normalization. Minor difference: distributes smoothing mass
+        # over the full vocab including pad (negligible — pad logit is unsupervised).
+        return F.cross_entropy(
+            logits,
+            target,
+            label_smoothing=self.smoothing,
+            ignore_index=self.pad_idx,
+            reduction="mean",
+        )

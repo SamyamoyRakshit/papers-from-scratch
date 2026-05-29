@@ -37,6 +37,7 @@
     - [Batch Shape Through Each Step](#batch-shape-through-each-step)
     - [What's Shared vs Different Between Encoder and Decoder](#whats-shared-vs-different-between-encoder-and-decoder)
     - [Why 5K PE Rows When max_seq_len = 128?](#why-5k-pe-rows-when-max_seq_len--128)
+   - [Why Not `max_seq_len = 5000` Then?](#why-not-max_seq_len--5000-then)
 14. [Integration — How `train.py` Wires Everything Together](#integration--how-trainpy-wires-everything-together)
 15. [All the Numbers — Cheat Sheet](#all-the-numbers--cheat-sheet)
 16. [References](#references)
@@ -1503,6 +1504,52 @@ Attention:  363 × 8 × 128 × 128                       = ~150 MB per layer (ac
 5 MB is noise compared to what actually eats memory.
 
 **Why not just set max_len=128?** You could. But then if you change `max_seq_len` to 200 for an experiment, PE crashes because it only has 128 rows. With 5000, you never have to think about it — change `max_seq_len` to anything up to 5000 and it just works.
+
+## Why Not `max_seq_len = 5000` Then?
+
+The PE table is cheap (5 MB, no gradients). But `max_seq_len` is what actually flows through the network — and attention pays for every token quadratically.
+
+**Cost — attention is O(n²) in sequence length:**
+
+```
+n = 128:    128² = 16,384       scores per head per layer
+n = 5000:   5000² = 25,000,000  scores per head per layer
+            ↑ ~1,500× more compute and activation memory, per layer, per head
+```
+
+**Why O(n²)?** Attention is "all-pairs" — every token's query is dot-producted with every other token's key:
+
+```
+Q: (n, d_k)         each row = one token's query
+K: (n, d_k)         each row = one token's key
+
+scores = Q @ K^T    → shape (n, n)
+                       ↑
+                  n queries × n keys = n² pairs
+```
+
+That `(n, n)` matrix is the cost:
+
+- **Compute:** n × n dot products to fill it
+- **Memory:** n² floats held in activations for backprop
+
+Doubling `n` quadruples the work; 40× the length (128 → 5000) means ~1500× the work.
+
+> **Further reading:** the n² wall is exactly why post-Transformer architectures like **FlashAttention**, **Linear Attention**, and **Mamba** exist — they sidestep the n² matrix for long-context models. Not needed for our 128-token translation setup, but see [`transformer/just_for_knowledge.md` §6](../../just_for_knowledge.md#6-post-transformer-architectures-flashattention-linear-attention-mamba) for a one-page overview.
+
+
+With `num_heads=8` and `num_layers=4` (encoder) + `4` (decoder), that ratio compounds across every attention call. A batch that fits at `n=128` would OOM many times over at `n=5000` on the same hardware.
+
+**You don't need it for translation.** After SentencePiece, real sentence pairs are well under 128 subword tokens — the dataset filter (`filter_max_ratio`) and the truncation in `encode()` together ensure outliers don't blow up the batch. Spending 1,500× the compute on positions the model would never see in training is pure waste.
+
+**Summary:**
+
+| Knob | Value | Cost | Why this value |
+|---|---|---|---|
+| `model.max_len` | 5000 | ~5 MB, no gradients | Cheap headroom — set once, never think about it |
+| `training.max_seq_len` | 128 | O(n²) attention per layer per head | Tight to real data — 1500× cheaper than 5000 with no quality loss |
+
+PE capacity is for flexibility; `max_seq_len` is for cost.
 
 ---
 

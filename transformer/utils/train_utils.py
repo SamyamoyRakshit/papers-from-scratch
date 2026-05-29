@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 import random
 from tqdm import tqdm
@@ -7,6 +8,7 @@ from tqdm import tqdm
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.amp import autocast, GradScaler
 from torch.utils.tensorboard import SummaryWriter
 
 from .mask_utils import create_src_mask, create_tgt_mask, create_memory_mask
@@ -61,6 +63,7 @@ def train_on_epoch(
         epoch: int,
         num_epochs: int,
         writer: SummaryWriter | None = None,
+        scaler: GradScaler | None = None,
 ) -> float:
     """
     Train the model for one epoch.
@@ -108,29 +111,64 @@ def train_on_epoch(
         tgt_mask = create_tgt_mask(tgt_input, pad_idx).to(device)           # (batch, 1, tgt_len, tgt_len)
         memory_mask = create_memory_mask(src, pad_idx).to(device)     # (batch, 1, 1, src_len)
 
-        # Forward pass
-        logits = model(src, tgt_input, src_mask, tgt_mask, memory_mask)
-        # logits: (batch_size, tgt_seq_len-1, vocab_size); tgt_seq_len-1 = len(tgt_input)
+        # Forward pass — wrapped in autocast for mixed-precision (fp16 on MPS/CUDA).
+        # autocast is a no-op when scaler is None, so fp32 training is unchanged.
+        # logits = model(src, tgt_input, src_mask, tgt_mask, memory_mask)
+        # # logits: (batch_size, tgt_seq_len-1, vocab_size); tgt_seq_len-1 = len(tgt_input)
+        #
+        # # Flatten for loss — LabelSmoothedLoss expects 2D logits and 1D targets
+        # vocab_size = logits.size(-1)
+        # logits = logits.reshape(-1, vocab_size)      # (batch * seq_len, vocab_size)
+        # tgt_output = tgt_output.reshape(-1)           # (batch * seq_len,)
+        #
+        # # Compute loss
+        # loss = criterion(logits, tgt_output)
+        with autocast(device_type=device.type, dtype=torch.float16, enabled=(scaler is not None)):
+            logits = model(src, tgt_input, src_mask, tgt_mask, memory_mask)
+            vocab_size = logits.size(-1)
+            logits = logits.reshape(-1, vocab_size)
+            tgt_output = tgt_output.reshape(-1)
+            # loss = criterion(logits, tgt_output)  # ← NaN on MPS fp16: cross_entropy inside autocast can overflow
+        # Loss outside autocast in fp32 — MPS fp16 cross_entropy NaNs on certain input ranges
+        loss = criterion(logits.float(), tgt_output)
 
-        # Flatten for loss — LabelSmoothedLoss expects 2D logits and 1D targets
-        vocab_size = logits.size(-1)
-        logits = logits.reshape(-1, vocab_size)      # (batch * seq_len, vocab_size)
-        tgt_output = tgt_output.reshape(-1)           # (batch * seq_len,)
+        # Backward pass — scaler.scale() multiplies loss by a large factor so
+        # fp16 gradients don't underflow. unscale_ before clipping so the norm
+        # is computed on real gradient magnitudes, not the scaled ones.
+        # optimizer.zero_grad()                         # clear previous gradients
+        # loss.backward()                               # compute gradients
+        #
+        # # Gradient clipping — prevents exploding gradients
+        # # Not in the paper, but standard practice for transformers
+        # nn.utils.clip_grad_norm_(parameters=model.parameters(), max_norm=clip_grad_norm)
+        #
+        # # Update weights and learning rate
+        # optimizer.step()                              # update parameters
+        # scheduler.step()                              # update lr (warmup -> decay)
+        optimizer.zero_grad()
+        if scaler is not None:
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            nn.utils.clip_grad_norm_(parameters=model.parameters(), max_norm=clip_grad_norm)
+            # Track scale before step — if scaler.step() skips (inf/NaN grads),
+            # scale halves and we must skip scheduler.step() too, else we'd advance
+            # LR on a step that didn't actually update weights.
+            prev_scale = scaler.get_scale()
+            scaler.step(optimizer)
+            scaler.update()
+            if scaler.get_scale() >= prev_scale:
+                scheduler.step()
+        else:
+            loss.backward()
+            nn.utils.clip_grad_norm_(parameters=model.parameters(), max_norm=clip_grad_norm)
+            optimizer.step()
+            scheduler.step()
 
-        # Compute loss
-        loss = criterion(logits, tgt_output)
-
-        # Backward pass
-        optimizer.zero_grad()                         # clear previous gradients
-        loss.backward()                               # compute gradients
-
-        # Gradient clipping — prevents exploding gradients
-        # Not in the paper, but standard practice for transformers
-        nn.utils.clip_grad_norm_(parameters=model.parameters(), max_norm=clip_grad_norm)
-
-        # Update weights and learning rate
-        optimizer.step()                              # update parameters
-        scheduler.step()                              # update lr (warmup -> decay)
+        # Release MPS cached blocks each step — on M1 unified memory, the
+        # cache holds onto freed tensors and shows up as "other allocations"
+        # in OOM errors. Costs ~5% speed, prevents OOM on long-sequence batches.
+        if device.type == "mps":
+            torch.mps.empty_cache()
 
         # Track loss — count non-pad tokens for accurate average
         n_tokens = (tgt_output != pad_idx).sum().item() # .item(): Converts a one-element tensor into a Python scalar, removing the tensor wrapper.
@@ -203,6 +241,11 @@ def validate(
         total_loss += loss.item() * n_tokens
         total_tokens += n_tokens
 
+        # Flush MPS cache during validation too — without grads it accumulates
+        # less per step, but over hundreds of val batches it adds up.
+        if device.type == "mps":
+            torch.mps.empty_cache()
+
     return total_loss / total_tokens
 
 
@@ -253,6 +296,12 @@ def train(
     """
     os.makedirs(checkpoint_dir, exist_ok=True)
 
+    # GradScaler for fp16 autocast on MPS/CUDA. None on CPU → autocast is disabled,
+    # training runs in fp32 unchanged. fp16 needs the scaler to prevent gradient
+    # underflow; bf16 wouldn't, but MPS bf16 support is still partial.
+    # scaler = GradScaler(device=device.type) if device.type in ("cuda", "mps") else None  # fp16 NaN'd on MPS at epoch 4 — attention softmax overflows as weights grow
+    scaler = None  # fp32 — loss.py memory bug is fixed + cache flushes free MPS, so fp32 fits
+
     for epoch in range(start_epoch, num_epochs+1):
         # Re-seed each epoch so resumes are bit-identical at epoch boundaries:
         # uninterrupted and resumed runs both hit set_seed(seed + epoch) here,
@@ -264,10 +313,20 @@ def train(
             model, train_loader, criterion, optimizer, scheduler,
             pad_idx, clip_grad_norm, device, epoch, num_epochs,
             writer=writer,
+            scaler=scaler,
         )
+
+        # Flush MPS cache between train and validate — frees the activation
+        # cache from the training epoch so val gets a fresh memory budget.
+        if device.type == "mps":
+            torch.mps.empty_cache()
 
         # Validate
         val_loss = validate(model, val_loader, criterion, pad_idx, device)
+
+        # Flush again before next epoch so accumulated buffers don't carry over.
+        if device.type == "mps":
+            torch.mps.empty_cache()
 
         logger.info(f"  Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
 
@@ -306,8 +365,14 @@ def train(
             _update_leaderboard(parent_dir, run_name, val_loss)
 
         # Save latest checkpoint every epoch (for resuming) — silent to avoid log noise.
+        # latest_path = os.path.join(checkpoint_dir, "last.pt")
+        # torch.save(obj=checkpoint, f=latest_path)
+        # Skip last.pt when loss is NaN — corrupted weights would poison auto-resume.
         latest_path = os.path.join(checkpoint_dir, "last.pt")
-        torch.save(obj=checkpoint, f=latest_path)
+        if math.isfinite(train_loss) and math.isfinite(val_loss):
+            torch.save(obj=checkpoint, f=latest_path)
+        else:
+            logger.warning(f"Skipping last.pt save — NaN loss (train={train_loss}, val={val_loss})")
 
     logger.info(f"Training complete. Best val loss: {best_val_loss:.4f}")
     logger.info(f"Latest weights: {latest_path}")

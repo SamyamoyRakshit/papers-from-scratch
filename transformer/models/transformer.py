@@ -103,3 +103,45 @@ class Transformer(nn.Module):
         logits = self.output_projection(decoder_output)
 
         return logits
+
+    def run_encoder_stack(self, src: torch.Tensor, src_mask: torch.Tensor = None) -> torch.Tensor:
+        """
+        Encoder-only forward — exposed for inference (encode once, reuse `memory` across decode steps).
+
+        Flow: src ids → embed → +PE → encoder stack
+        Args:
+            src: (batch_size, src_seq_len)
+            src_mask: (batch_size, 1, 1, src_seq_len)
+        Returns:
+            memory: (batch_size, src_seq_len, d_model)
+        """
+        # embed + positional encoding, then run the encoder stack
+        src_embedded = self.positional_encoding(self.src_embedding(src))
+        memory = self.encoder(src_embedded, src_mask)
+        return memory
+
+    def run_decoder_stack(
+            self,
+            tgt: torch.Tensor,
+            memory: torch.Tensor,
+            tgt_mask: torch.Tensor = None,
+            memory_mask: torch.Tensor = None,
+    ) -> torch.Tensor:
+        """
+        Decoder + output projection — called once per step during autoregressive decoding.
+
+        Flow: tgt ids → embed → +PE → decoder stack (cross-attends to `memory`) → linear → logits
+        Args:
+            tgt: (batch_size, tgt_seq_len)               — tokens generated so far
+            memory: (batch_size, src_seq_len, d_model)   — encoder output, precomputed once
+            tgt_mask: (batch_size, 1, tgt_seq_len, tgt_seq_len)  — causal + padding
+            memory_mask: (batch_size, 1, 1, src_seq_len) — source padding for cross-attention
+        Returns:
+            logits: (batch_size, tgt_seq_len, tgt_vocab_size)
+        """
+        # embed + positional encoding, then decode against the precomputed memory
+        tgt_embedded = self.positional_encoding(self.tgt_embedding(tgt))
+        decoder_output = self.decoder(tgt_embedded, memory, tgt_mask, memory_mask)
+        # project to vocabulary logits (weights tied with target embedding)
+        logits = self.output_projection(decoder_output)
+        return logits
