@@ -1,4 +1,18 @@
-## Architecture at a Glance
+## Table of Contents
+
+1. [Architecture at a Glance](#architecture-at-a-glance)
+2. [Why Cross-Attention Only Needs Padding Mask](#why-cross-attention-only-needs-padding-mask)
+3. [Why Output Shape Follows Query, Not Key/Value](#why-output-shape-follows-query-not-keyvalue)
+4. [End-to-End Mathematical Trace — One DecoderLayer](#end-to-end-mathematical-trace--one-decoderlayer)
+5. [Padding vs Masking — Why Encoder Output Has Pad Artifacts](#padding-vs-masking--why-encoder-output-has-pad-artifacts)
+   - [What `src_mask` Actually Does — Rows vs Columns](#what-src_mask-actually-does--rows-vs-columns)
+   - [What Happens After Attention — FFN + LayerNorm on Pad Positions](#what-happens-after-attention--ffn--layernorm-on-pad-positions)
+   - [Why `memory_mask` Exists — Decoder Runs Its Own Attention](#why-memory_mask-exists--decoder-runs-its-own-attention)
+   - [Summary — Who Blocks What](#summary--who-blocks-what)
+
+---
+
+# Architecture at a Glance
 
 One **DecoderLayer** — applied identically N times to form the full decoder. Three sub-layers: masked self-attention (on the target), cross-attention (target queries against the encoder's `memory`), and a position-wise FFN. Each follows post-LN: `LayerNorm(x + Dropout(sublayer(x)))`.
 
@@ -58,19 +72,6 @@ The two masks do different jobs:
 - **`memory_mask`** is pure src-padding for cross-attention — the decoder can attend to any source position, just not the padded ones.
 
 `memory` is computed once by the encoder and reused across **every** decoder layer, **every** decode step at inference time — that's why `inference.py` calls `run_encoder_stack` once and loops only the decoder.
-
----
-
-## Table of Contents
-
-1. [Why Cross-Attention Only Needs Padding Mask](#why-cross-attention-only-needs-padding-mask)
-2. [Why Output Shape Follows Query, Not Key/Value](#why-output-shape-follows-query-not-keyvalue)
-3. [End-to-End Mathematical Trace — One DecoderLayer](#end-to-end-mathematical-trace--one-decoderlayer)
-4. [Padding vs Masking — Why Encoder Output Has Pad Artifacts](#padding-vs-masking--why-encoder-output-has-pad-artifacts)
-   - [What `src_mask` Actually Does — Rows vs Columns](#what-src_mask-actually-does--rows-vs-columns)
-   - [What Happens After Attention — FFN + LayerNorm on Pad Positions](#what-happens-after-attention--ffn--layernorm-on-pad-positions)
-   - [Why `memory_mask` Exists — Decoder Runs Its Own Attention](#why-memory_mask-exists--decoder-runs-its-own-attention)
-   - [Summary — Who Blocks What](#summary--who-blocks-what)
 
 ---
 

@@ -1,4 +1,55 @@
-## Architecture at a Glance
+## Table of Contents
+
+1. [Architecture at a Glance](#architecture-at-a-glance)
+2. [Relative Imports and `__init__.py`](#relative-imports-and-__init__py)
+   - [The Three Import Styles](#the-three-import-styles)
+   - [How `.` Works in Relative Imports](#how--works-in-relative-imports)
+   - [Why `__init__.py` is Required](#why-__init__py-is-required)
+   - [The Caveat: Can't Run Files Directly](#the-caveat-cant-run-files-directly)
+   - [Will This Break Existing Code?](#will-this-break-existing-code)
+3. [Why `self.self_attn(src, src, src)` — Self-Attention Explained](#why-selfself_attnsrc-src-src--self-attention-explained)
+   - [The Confusing Line](#the-confusing-line)
+   - [`__init__` and `forward` Are Different Calls](#__init__-and-forward-are-different-calls)
+   - [Why Q = K = V = `src`?](#why-q--k--v--src)
+   - [Self-Attention vs Cross-Attention](#self-attention-vs-cross-attention)
+   - [Who Says Q, K, V Dimensions Must Match?](#who-says-q-k-v-dimensions-must-match)
+4. [`__init__` vs `forward` — Building the Machine vs Running It](#__init__-vs-forward--building-the-machine-vs-running-it)
+   - [The Core Idea](#the-core-idea)
+   - [Why Can't We Pass Data in `__init__`?](#why-cant-we-pass-data-in-__init__)
+   - [Data Arrives in `forward`](#data-arrives-in-forward)
+   - [The Factory Analogy](#the-factory-analogy)
+   - [The Full Lifecycle](#the-full-lifecycle)
+5. [End-to-End Mathematical Trace — One EncoderLayer](#end-to-end-mathematical-trace--one-encoderlayer)
+   - [Sub-layer 1: Multi-Head Self-Attention](#sub-layer-1-multi-head-self-attention)
+   - [Sub-layer 2: Feed-Forward Network](#sub-layer-2-feed-forward-network)
+   - [Output — One EncoderLayer Done](#output--one-encoderlayer-done)
+   - [Full Encoder Stack — 4 Layers](#full-encoder-stack--4-layers)
+6. [What Is Dropout? — Regularization by Random Zeroing](#what-is-dropout--regularization-by-random-zeroing)
+   - [The Problem — Overfitting](#the-problem--overfitting)
+   - [How Dropout Works](#how-dropout-works)
+   - [`model.train()` vs `model.eval()` — The Mode Switch](#modeltrain-vs-modeleval--the-mode-switch)
+   - [Where Dropout Is Used in Our Code](#where-dropout-is-used-in-our-code)
+   - [Why 0.1 and Not Higher?](#why-01-and-not-higher)
+7. [Where Does Dropout Go? — Sub-layer Output, Not LayerNorm Output](#where-does-dropout-go--sub-layer-output-not-layernorm-output)
+   - [The Paper's Formula (Section 5.4)](#the-papers-formula-section-54)
+   - [All Three Dropout Locations in the Paper (Section 5.4)](#all-three-dropout-locations-in-the-paper-section-54)
+   - [Why Not After LayerNorm?](#why-not-after-layernorm)
+8. [`nn.ModuleList` — N Layers, Each With Own Weights](#nnmodulelist--n-layers-each-with-own-weights)
+   - [What This Code Does](#what-this-code-does)
+   - [What Happens Inside Each `EncoderLayer(...)` Call](#what-happens-inside-each-encoderlayer-call)
+   - [Data Flows Through Layers Sequentially](#data-flows-through-layers-sequentially)
+9. [`nn.ModuleList` vs `nn.Sequential` — Stacking Layers](#nnmodulelist-vs-nnsequential--stacking-layers)
+   - [`nn.Sequential` — stack + return (from `ViT/ViT.ipynb`)](#nnsequential--stack--return-from-vitvitipynb)
+   - [`nn.ModuleList` — stack only (from `transformer/models/encoder.py`)](#nnmodulelist--stack-only-from-transformermodelsencoderpy)
+   - [Why the Difference?](#why-the-difference)
+10. [Why No Final LayerNorm? — Staying Faithful to the Paper](#why-no-final-layernorm--staying-faithful-to-the-paper)
+    - [What PyTorch Does](#what-pytorch-does)
+    - [Why PyTorch Has It](#why-pytorch-has-it)
+    - [Why We Don't Use It](#why-we-dont-use-it)
+
+---
+
+# Architecture at a Glance
 
 One **EncoderLayer** — applied identically N times (default 4) to form the full encoder. Blue = input, green = output, pink = mask (dashed = control-only), yellow = computation, `(+)` = residual sum. The two sub-layers (self-attention, then position-wise FFN) each follow the post-LN recipe: `LayerNorm(x + Dropout(sublayer(x)))`.
 
@@ -46,56 +97,6 @@ flowchart LR
 ```
 
 Every layer has its own weights (see [nn.ModuleList](#nnmodulelist--n-layers-each-with-own-weights)). The mask is the same `src_mask` reused across all layers — it depends only on the padding pattern, which doesn't change.
-
----
-
-## Table of Contents
-
-1. [Relative Imports and `__init__.py`](#relative-imports-and-__init__py)
-   - [The Three Import Styles](#the-three-import-styles)
-   - [How `.` Works in Relative Imports](#how--works-in-relative-imports)
-   - [Why `__init__.py` is Required](#why-__init__py-is-required)
-   - [The Caveat: Can't Run Files Directly](#the-caveat-cant-run-files-directly)
-   - [Will This Break Existing Code?](#will-this-break-existing-code)
-2. [Why `self.self_attn(src, src, src)` — Self-Attention Explained](#why-selfself_attnsrc-src-src--self-attention-explained)
-   - [The Confusing Line](#the-confusing-line)
-   - [`__init__` and `forward` Are Different Calls](#__init__-and-forward-are-different-calls)
-   - [Why Q = K = V = `src`?](#why-q--k--v--src)
-   - [Self-Attention vs Cross-Attention](#self-attention-vs-cross-attention)
-   - [Who Says Q, K, V Dimensions Must Match?](#who-says-q-k-v-dimensions-must-match)
-3. [`__init__` vs `forward` — Building the Machine vs Running It](#__init__-vs-forward--building-the-machine-vs-running-it)
-   - [The Core Idea](#the-core-idea)
-   - [Why Can't We Pass Data in `__init__`?](#why-cant-we-pass-data-in-__init__)
-   - [Data Arrives in `forward`](#data-arrives-in-forward)
-   - [The Factory Analogy](#the-factory-analogy)
-   - [The Full Lifecycle](#the-full-lifecycle)
-4. [End-to-End Mathematical Trace — One EncoderLayer](#end-to-end-mathematical-trace--one-encoderlayer)
-   - [Sub-layer 1: Multi-Head Self-Attention](#sub-layer-1-multi-head-self-attention)
-   - [Sub-layer 2: Feed-Forward Network](#sub-layer-2-feed-forward-network)
-   - [Output — One EncoderLayer Done](#output--one-encoderlayer-done)
-   - [Full Encoder Stack — 4 Layers](#full-encoder-stack--4-layers)
-5. [What Is Dropout? — Regularization by Random Zeroing](#what-is-dropout--regularization-by-random-zeroing)
-   - [The Problem — Overfitting](#the-problem--overfitting)
-   - [How Dropout Works](#how-dropout-works)
-   - [`model.train()` vs `model.eval()` — The Mode Switch](#modeltrain-vs-modeleval--the-mode-switch)
-   - [Where Dropout Is Used in Our Code](#where-dropout-is-used-in-our-code)
-   - [Why 0.1 and Not Higher?](#why-01-and-not-higher)
-6. [Where Does Dropout Go? — Sub-layer Output, Not LayerNorm Output](#where-does-dropout-go--sub-layer-output-not-layernorm-output)
-   - [The Paper's Formula (Section 5.4)](#the-papers-formula-section-54)
-   - [All Three Dropout Locations in the Paper (Section 5.4)](#all-three-dropout-locations-in-the-paper-section-54)
-   - [Why Not After LayerNorm?](#why-not-after-layernorm)
-7. [`nn.ModuleList` — N Layers, Each With Own Weights](#nnmodulelist--n-layers-each-with-own-weights)
-   - [What This Code Does](#what-this-code-does)
-   - [What Happens Inside Each `EncoderLayer(...)` Call](#what-happens-inside-each-encoderlayer-call)
-   - [Data Flows Through Layers Sequentially](#data-flows-through-layers-sequentially)
-8. [`nn.ModuleList` vs `nn.Sequential` — Stacking Layers](#nnmodulelist-vs-nnsequential--stacking-layers)
-   - [`nn.Sequential` — stack + return (from `ViT/ViT.ipynb`)](#nnsequential--stack--return-from-vitvitipynb)
-   - [`nn.ModuleList` — stack only (from `transformer/models/encoder.py`)](#nnmodulelist--stack-only-from-transformermodelsencoderpy)
-   - [Why the Difference?](#why-the-difference)
-9. [Why No Final LayerNorm? — Staying Faithful to the Paper](#why-no-final-layernorm--staying-faithful-to-the-paper)
-   - [What PyTorch Does](#what-pytorch-does)
-   - [Why PyTorch Has It](#why-pytorch-has-it)
-   - [Why We Don't Use It](#why-we-dont-use-it)
 
 ---
 

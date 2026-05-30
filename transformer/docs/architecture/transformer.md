@@ -1,4 +1,27 @@
-## Architecture at a Glance
+## Table of Contents
+
+1. [Architecture at a Glance](#architecture-at-a-glance)
+2. [What is Output Projection?](#what-is-output-projection)
+3. [Weight Sharing — One Matrix, Two Jobs (Section 3.4)](#weight-sharing--one-matrix-two-jobs-section-34)
+   - [What the Paper Says](#what-the-paper-says)
+   - [How It Works in Code](#how-it-works-in-code)
+   - [The Two Jobs of One Matrix](#the-two-jobs-of-one-matrix)
+   - [Why Share?](#why-share)
+   - [Why `src_vocab_size` and `tgt_vocab_size` Are Both 16000](#why-src_vocab_size-and-tgt_vocab_size-are-both-16000)
+   - [But "I" ≠ "আমি" — How Can They Share W?](#but-i--আমি--how-can-they-share-w)
+   - [What Actually Benefits From Sharing — Three Things](#what-actually-benefits-from-sharing--three-things)
+   - [How Training Still Works With Shared Weights](#how-training-still-works-with-shared-weights)
+   - [Full Example — With Sharing vs Without Sharing](#full-example--with-sharing-vs-without-sharing)
+   - [Full Data Flow Summary](#full-data-flow-summary)
+4. [What if `src_vocab_size != tgt_vocab_size`?](#what-if-src_vocab_size--tgt_vocab_size)
+6. [Why Shared PositionalEncoding Works](#why-shared-positionalencoding-works)
+7. [Why Return Logits, Not Softmax](#why-return-logits-not-softmax)
+8. [Inference Helpers — `run_encoder_stack` / `run_decoder_stack`](#inference-helpers--run_encoder_stack--run_decoder_stack)
+9. [End-to-End Mathematical Trace — Full Transformer Forward Pass](#end-to-end-mathematical-trace--full-transformer-forward-pass)
+
+---
+
+# Architecture at a Glance
 
 End-to-end data flow through the full Transformer. Blue = inputs, green = outputs, pink = masks (dashed arrows, control-only — they shape attention, they aren't a value path), yellow = computation blocks.
 
@@ -42,28 +65,6 @@ flowchart TD
 ```
 
 The shape to notice: encoder runs **once** per batch (constant `memory`), decoder consumes it via cross-attention. The output projection's weights are **tied** to `tgt_embedding` (paper Section 3.4) — covered in the [Weight Sharing](#weight-sharing--one-matrix-two-jobs-section-34) section.
-
----
-
-## Table of Contents
-
-1. [What is Output Projection?](#what-is-output-projection)
-2. [Weight Sharing — One Matrix, Two Jobs (Section 3.4)](#weight-sharing--one-matrix-two-jobs-section-34)
-   - [What the Paper Says](#what-the-paper-says)
-   - [How It Works in Code](#how-it-works-in-code)
-   - [The Two Jobs of One Matrix](#the-two-jobs-of-one-matrix)
-   - [Why Share?](#why-share)
-   - [Why `src_vocab_size` and `tgt_vocab_size` Are Both 16000](#why-src_vocab_size-and-tgt_vocab_size-are-both-16000)
-   - [But "I" ≠ "আমি" — How Can They Share W?](#but-i--আমি--how-can-they-share-w)
-   - [What Actually Benefits From Sharing — Three Things](#what-actually-benefits-from-sharing--three-things)
-   - [How Training Still Works With Shared Weights](#how-training-still-works-with-shared-weights)
-   - [Full Example — With Sharing vs Without Sharing](#full-example--with-sharing-vs-without-sharing)
-   - [Full Data Flow Summary](#full-data-flow-summary)
-3. [What if `src_vocab_size != tgt_vocab_size`?](#what-if-src_vocab_size--tgt_vocab_size)
-5. [Why Shared PositionalEncoding Works](#why-shared-positionalencoding-works)
-6. [Why Return Logits, Not Softmax](#why-return-logits-not-softmax)
-7. [Inference Helpers — `run_encoder_stack` / `run_decoder_stack`](#inference-helpers--run_encoder_stack--run_decoder_stack)
-8. [End-to-End Mathematical Trace — Full Transformer Forward Pass](#end-to-end-mathematical-trace--full-transformer-forward-pass)
 
 ---
 
