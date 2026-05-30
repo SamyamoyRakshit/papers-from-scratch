@@ -1,3 +1,54 @@
+## Architecture at a Glance
+
+One **EncoderLayer** — applied identically N times (default 4) to form the full encoder. Blue = input, green = output, pink = mask (dashed = control-only), yellow = computation, `(+)` = residual sum. The two sub-layers (self-attention, then position-wise FFN) each follow the post-LN recipe: `LayerNorm(x + Dropout(sublayer(x)))`.
+
+```mermaid
+flowchart TD
+    IN[/"src<br/>(batch, seq, d_model)"/]
+    MASK[/"src_mask"/]
+
+    IN --> SA["MultiHeadAttention<br/>Q = K = V = src"]
+    MASK -.-> SA
+    SA --> D1["Dropout"]
+    D1 --> ADD1(("+"))
+    IN -.->|"residual"| ADD1
+    ADD1 --> N1["LayerNorm"]
+
+    N1 --> FF["FeedForward<br/>d_model → d_ff → d_model (ReLU)"]
+    FF --> D2["Dropout"]
+    D2 --> ADD2(("+"))
+    N1 -.->|"residual"| ADD2
+    ADD2 --> N2["LayerNorm"]
+
+    N2 --> OUT[/"src'<br/>(batch, seq, d_model)"/]
+
+    style IN fill:#eef,stroke:#99d,color:#000
+    style OUT fill:#dfd,stroke:#9d9,color:#000
+    style MASK fill:#fdd,stroke:#f99,color:#000
+    style SA fill:#ffd,stroke:#dd9,color:#000
+    style FF fill:#ffd,stroke:#dd9,color:#000
+    style D1 fill:#fff,stroke:#999,color:#000
+    style D2 fill:#fff,stroke:#999,color:#000
+    style N1 fill:#fff,stroke:#999,color:#000
+    style N2 fill:#fff,stroke:#999,color:#000
+```
+
+Stacked N times to form the full Encoder — the output of one layer is the input of the next:
+
+```mermaid
+flowchart LR
+    A[/"src_embedded"/] --> L1["EncoderLayer 1"] --> L2["EncoderLayer 2"] --> LD["..."] --> LN["EncoderLayer N"] --> Z[/"encoder_output"/]
+    style A fill:#eef,stroke:#99d,color:#000
+    style Z fill:#dfd,stroke:#9d9,color:#000
+    style L1 fill:#ffd,stroke:#dd9,color:#000
+    style L2 fill:#ffd,stroke:#dd9,color:#000
+    style LN fill:#ffd,stroke:#dd9,color:#000
+```
+
+Every layer has its own weights (see [nn.ModuleList](#nnmodulelist--n-layers-each-with-own-weights)). The mask is the same `src_mask` reused across all layers — it depends only on the padding pattern, which doesn't change.
+
+---
+
 ## Table of Contents
 
 1. [Relative Imports and `__init__.py`](#relative-imports-and-__init__py)

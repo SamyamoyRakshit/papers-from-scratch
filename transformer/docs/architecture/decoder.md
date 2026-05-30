@@ -1,3 +1,66 @@
+## Architecture at a Glance
+
+One **DecoderLayer** — applied identically N times to form the full decoder. Three sub-layers: masked self-attention (on the target), cross-attention (target queries against the encoder's `memory`), and a position-wise FFN. Each follows post-LN: `LayerNorm(x + Dropout(sublayer(x)))`.
+
+Blue = inputs (target tokens + encoder memory), green = output, pink = masks (dashed = control-only), yellow = computation.
+
+```mermaid
+flowchart TD
+    IN[/"tgt<br/>batch x tgt_len x d_model"/]
+    MEM[/"memory<br/>from encoder"/]
+    TM[/"tgt_mask<br/>causal AND pad"/]
+    MM[/"memory_mask<br/>src pad"/]
+
+    %% sub-layer 1: masked self-attn
+    IN --> SA["Masked MultiHeadAttention<br/>Q = K = V = tgt"]
+    TM -.-> SA
+    SA --> D1["Dropout"]
+    D1 --> ADD1(("+"))
+    IN -.->|"residual"| ADD1
+    ADD1 --> N1["LayerNorm"]
+
+    %% sub-layer 2: cross-attn
+    N1 --> CA["MultiHeadAttention<br/>Q = tgt; K = V = memory"]
+    MEM -.->|"K and V"| CA
+    MM -.-> CA
+    CA --> D2["Dropout"]
+    D2 --> ADD2(("+"))
+    N1 -.->|"residual"| ADD2
+    ADD2 --> N2["LayerNorm"]
+
+    %% sub-layer 3: FFN
+    N2 --> FF["FeedForward<br/>d_model → d_ff → d_model"]
+    FF --> D3["Dropout"]
+    D3 --> ADD3(("+"))
+    N2 -.->|"residual"| ADD3
+    ADD3 --> N3["LayerNorm"]
+
+    N3 --> OUT[/"tgt'<br/>batch x tgt_len x d_model"/]
+
+    style IN fill:#eef,stroke:#99d,color:#000
+    style MEM fill:#eef,stroke:#99d,color:#000
+    style OUT fill:#dfd,stroke:#9d9,color:#000
+    style TM fill:#fdd,stroke:#f99,color:#000
+    style MM fill:#fdd,stroke:#f99,color:#000
+    style SA fill:#ffd,stroke:#dd9,color:#000
+    style CA fill:#ffd,stroke:#dd9,color:#000
+    style FF fill:#ffd,stroke:#dd9,color:#000
+    style D1 fill:#fff,stroke:#999,color:#000
+    style D2 fill:#fff,stroke:#999,color:#000
+    style D3 fill:#fff,stroke:#999,color:#000
+    style N1 fill:#fff,stroke:#999,color:#000
+    style N2 fill:#fff,stroke:#999,color:#000
+    style N3 fill:#fff,stroke:#999,color:#000
+```
+
+The two masks do different jobs:
+- **`tgt_mask`** combines causal (no peeking at future tokens) + padding (ignore `<pad>` tokens) for self-attention — see [Why Cross-Attention Only Needs Padding Mask](#why-cross-attention-only-needs-padding-mask).
+- **`memory_mask`** is pure src-padding for cross-attention — the decoder can attend to any source position, just not the padded ones.
+
+`memory` is computed once by the encoder and reused across **every** decoder layer, **every** decode step at inference time — that's why `inference.py` calls `run_encoder_stack` once and loops only the decoder.
+
+---
+
 ## Table of Contents
 
 1. [Why Cross-Attention Only Needs Padding Mask](#why-cross-attention-only-needs-padding-mask)

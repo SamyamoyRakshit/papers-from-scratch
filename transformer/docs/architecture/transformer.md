@@ -1,3 +1,50 @@
+## Architecture at a Glance
+
+End-to-end data flow through the full Transformer. Blue = inputs, green = outputs, pink = masks (dashed arrows, control-only — they shape attention, they aren't a value path), yellow = computation blocks.
+
+```mermaid
+flowchart TD
+    SRC[/"src tokens<br/>(batch, src_len)"/]
+    TGT[/"tgt tokens<br/>(batch, tgt_len-1)"/]
+    SM[/"src_mask"/]
+    TM[/"tgt_mask<br/>(causal + pad)"/]
+    MM[/"memory_mask"/]
+
+    SRC --> SE["src_embedding<br/>vocab → d_model"]
+    SE --> PE1["+ positional_encoding<br/>(sin/cos)"]
+    PE1 --> ENC["Encoder<br/>stack of N layers"]
+    SM -.-> ENC
+
+    TGT --> TE["tgt_embedding<br/>vocab → d_model"]
+    TE --> PE2["+ positional_encoding<br/>(sin/cos)"]
+    PE2 --> DEC["Decoder<br/>stack of N layers"]
+    TM -.-> DEC
+    MM -.-> DEC
+
+    ENC -->|"memory<br/>(batch, src_len, d_model)"| DEC
+
+    DEC --> OP["output_projection<br/>d_model → vocab<br/>(weights tied to tgt_embedding)"]
+    OP --> OUT[/"logits<br/>(batch, tgt_len-1, vocab)"/]
+
+    style SRC fill:#eef,stroke:#99d,color:#000
+    style TGT fill:#eef,stroke:#99d,color:#000
+    style OUT fill:#dfd,stroke:#9d9,color:#000
+    style SM fill:#fdd,stroke:#f99,color:#000
+    style TM fill:#fdd,stroke:#f99,color:#000
+    style MM fill:#fdd,stroke:#f99,color:#000
+    style ENC fill:#ffd,stroke:#dd9,color:#000
+    style DEC fill:#ffd,stroke:#dd9,color:#000
+    style SE fill:#fff,stroke:#999,color:#000
+    style TE fill:#fff,stroke:#999,color:#000
+    style PE1 fill:#fff,stroke:#999,color:#000
+    style PE2 fill:#fff,stroke:#999,color:#000
+    style OP fill:#fff,stroke:#999,color:#000
+```
+
+The shape to notice: encoder runs **once** per batch (constant `memory`), decoder consumes it via cross-attention. The output projection's weights are **tied** to `tgt_embedding` (paper Section 3.4) — covered in the [Weight Sharing](#weight-sharing--one-matrix-two-jobs-section-34) section.
+
+---
+
 ## Table of Contents
 
 1. [What is Output Projection?](#what-is-output-projection)
