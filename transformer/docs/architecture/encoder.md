@@ -65,7 +65,7 @@ flowchart TD
     IN -.->|"residual"| ADD1
     ADD1 --> N1["LayerNorm"]
 
-    N1 --> FF["FeedForward<br/>d_model->d_ff {ReLU}->d_model"]
+    N1 --> FF["FeedForward<br/>d_model->d_ff ReLU->d_model"]
     FF --> D2["Dropout"]
     D2 --> ADD2(("+"))
     N1 -.->|"residual"| ADD2
