@@ -46,7 +46,7 @@ flowchart TD
 
     ENC -->|"memory<br/>(batch, src_len, d_model)"| DEC
 
-    DEC --> OP["output_projection<br/>d_model → vocab<br/>(weights tied to tgt_embedding)"]
+    DEC --> OP["output_projection<br/>d_model<br/>→ vocab<br/>(weights tied to<br/>tgt_embedding)"]
     OP --> OUT[/"logits<br/>(batch, tgt_len-1, vocab)"/]
 
     style SRC fill:#eef,stroke:#99d,color:#000
