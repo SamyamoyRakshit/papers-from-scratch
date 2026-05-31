@@ -43,7 +43,7 @@ flowchart TD
     ADD2 --> N2["LayerNorm"]
 
     %% sub-layer 3: FFN
-    N2 --> FF["FeedForward<br/>d_model → d_ff → d_model"/]
+    N2 --> FF[/"FeedForward<br/>d_model → d_ff → d_model"/]
     FF --> D3["Dropout"]
     D3 --> ADD3(("+"))
     N2 -.->|"residual"| ADD3
