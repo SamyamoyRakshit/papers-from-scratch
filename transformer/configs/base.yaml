@@ -39,7 +39,7 @@ model:
 training:
   max_tokens_per_batch: 800 #1000 #8000   # ~8K src + ~8K tgt tokens per batch — Paper: ~25K each, Section 5.1 (reduced for M1 memory; lowered to 800 for 500K-row training where MPS cache pressure accumulates over 13K steps/epoch)
   max_seq_len: 64   #80 #128       # Not specified in paper (we cap for memory; lowered from 80 → 64 — most pairs are <64 tokens anyway; trims worst-case attention from 80²=6400 to 64²=4096 per head)
-  num_epochs: 10 #30       # Paper: 100K steps, Section 5.2; extended from 10 → 30 to give the 500K-data model more training (val_loss was still decreasing at epoch 10)
+  num_epochs: 30           # Paper: 100K steps, Section 5.2; extended from 10 → 30 to give the 500K-data model more training (val_loss was still decreasing at epoch 10)
   label_smoothing: 0.1         # Paper: 0.1, Section 5.4 (same as paper ✓)
   warmup_steps: 4000           # Paper: 4000, Section 5.3 (same as paper ✓)
   clip_grad_norm: 1.0          # Max gradient norm — not in paper, safety net against exploding gradients

@@ -78,6 +78,7 @@ dependencies = [
     "pyyaml>=6.0",
     "tensorboard>=2.20.0",
     "python-dotenv>=1.2.2",
+    "gradio>=6.15.2",
 ]
 readme = { file = "README.md", content-type = "text/markdown" }
 
