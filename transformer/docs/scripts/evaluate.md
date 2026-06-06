@@ -87,8 +87,6 @@ sequenceDiagram
 
 The shape to notice: **perplexity is free** (it's just `exp` of a number already in the checkpoint), while **BLEU is expensive** — it runs full beam search on every val pair. That asymmetry is why `--max_samples` exists.
 
-> *If your VS Code preview shows raw mermaid source, native rendering ships in VS Code 1.121+ — just reload the window.*
-
 ---
 
 # Two Metrics, Two Questions

@@ -9,7 +9,7 @@
 #
 # MODEL DEVIATION FROM PAPER:
 #   We reduce d_model (512→256), d_ff (2048→1024), num_layers (6→4),
-#   and max_tokens_per_batch (25000→8000) to fit within 16GB unified
+#   and max_tokens_per_batch (25000→800) to fit within 16GB unified
 #   memory. Without these changes, the model + optimizer states +
 #   activations would exceed available memory and crash or swap to disk.
 #
@@ -37,7 +37,7 @@ model:
 
 # --- Training (Section 5) ---
 training:
-  max_tokens_per_batch: 800 #1000 #8000   # ~8K src + ~8K tgt tokens per batch — Paper: ~25K each, Section 5.1 (reduced for M1 memory; lowered to 800 for 500K-row training where MPS cache pressure accumulates over 13K steps/epoch)
+  max_tokens_per_batch: 800 #1000 #8000   # ~800 tokens per batch (total) — Paper: ~25K src + ~25K tgt, Section 5.1 (slashed for M1 memory; 800 for 500K-row training where MPS cache pressure accumulates over ~15K steps/epoch)
   max_seq_len: 64   #80 #128       # Not specified in paper (we cap for memory; lowered from 80 → 64 — most pairs are <64 tokens anyway; trims worst-case attention from 80²=6400 to 64²=4096 per head)
   num_epochs: 30           # Paper: 100K steps, Section 5.2; extended from 10 → 30 to give the 500K-data model more training (val_loss was still decreasing at epoch 10)
   label_smoothing: 0.1         # Paper: 0.1, Section 5.4 (same as paper ✓)
@@ -63,8 +63,8 @@ data:
 
 # --- Inference (Section 6.1) ---
 inference:
-  beam_size: 4 #2          # Paper: 4, Section 6.1. Reduced to 2 for cheaper decode on small model.
-  length_penalty: 1 #0.6   # Paper: 0.6, Section 6.1 (Wu et al. 2016, WMT-tuned)
+  beam_size: 4 #2          # Paper: 4, Section 6.1 (kept at 4 — best BLEU for this model; drop to 2 for cheaper decode)
+  length_penalty: 1 #0.6   # Paper: 0.6 (Wu et al. 2016, WMT-tuned), Section 6.1 — set to 1.0: the under-trained model emits <eos> early, so α=1.0 rewards longer outputs (best BLEU; see article §6)
 
 # --- Special Tokens ---
 tokens:

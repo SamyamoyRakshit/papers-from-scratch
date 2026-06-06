@@ -61,5 +61,8 @@ tokenizer/
 # Markdowns
 # ViT/just_for_knowledge.md
 
+# gradio
+.gradio
+
 # Claude Code's guide
 CLAUDE.md
