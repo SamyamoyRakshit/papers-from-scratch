@@ -1,0 +1,49 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+*.pyo
+
+# Virtual environments
+.venv/
+.venv-paper-replication/
+env/
+venv/
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# System files (macOS)
+.DS_Store
+
+# IDE/editor settings
+.vscode/
+.idea/
+
+# Logs and temp files
+*.log
+*.tmp
+*.bak
+*.swp
+
+# Build outputs
+build/
+dist/
+*.egg-info/
+
+# Pytest cache
+.pytest_cache/
+
+# Dataset and data folders (optional: include if large or unnecessary to track)
+dataset/test
+dataset/train
+
+# uv or pip-lock file (optional: ignore if you want fresh install on every clone)
+uv.lock
+
+# Models
+ViT/models
+
+# Markdowns
+# ViT/just_for_knowledge.md
