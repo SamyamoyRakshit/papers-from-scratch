@@ -1,0 +1,71 @@
+.
+├── ARTICLE.md                       # Long-form write-up of the build (the article)
+├── README.md                        # Setup + how to run + results
+├── repo.txt                         # This annotated file tree
+├── requirements.txt                 # pip fallback (pyproject.toml at repo root is the source of truth)
+├── just_for_knowledge.md            # Theory + math + paper notes (scratch)
+├── markdown_images/                 # Figures used in ARTICLE.md
+│   ├── transformer_architecture.png # Paper Figure 1 (Vaswani et al., 2017)
+│   ├── gradio_demo.png              # The Gradio translation UI
+│   ├── lr_overshoot.png             # LR illustration — overshoot/divergence
+│   ├── lr_smooth.png                # LR illustration — smooth convergence
+│   ├── tb_compare_train_loss_epoch.png
+│   ├── tb_compare_train_loss_step.png
+│   ├── tb_compare_lr.png
+│   └── tb_compare_val_loss_epoch.png
+├── models/
+│   ├── __init__.py
+│   ├── transformer.py               # Full model + weight tying
+│   ├── encoder.py                   # EncoderLayer + Encoder stack
+│   ├── decoder.py                   # DecoderLayer + Decoder stack
+│   └── modules/
+│       ├── __init__.py
+│       ├── embeddings.py            # token embeddings × √d_model
+│       ├── positional_encoding.py   # sinusoidal PE (registered buffer)
+│       ├── multi_head_attention.py  # scaled dot-product + MHA
+│       ├── feed_forward.py          # position-wise FFN (ReLU)
+│       └── layer_norm.py            # layer normalization
+├── utils/
+│   ├── __init__.py
+│   ├── config.py                    # typed, validated YAML config (pydantic)
+│   ├── mask_utils.py                # src / tgt / memory masks
+│   ├── loss.py                      # label-smoothed cross-entropy
+│   ├── optimizer.py                 # Adam + Noam LR schedule
+│   ├── data_utils.py                # Samanantar + SentencePiece + token batching
+│   ├── train_utils.py               # training loop + checkpointing
+│   └── logging_setup.py             # logging configuration
+├── scripts/
+│   ├── _common.py                   # shared model/checkpoint helpers
+│   ├── train.py                     # training entrypoint + run provenance
+│   ├── evaluate.py                  # BLEU + perplexity
+│   ├── inference.py                 # beam-search translation
+│   ├── app.py                       # local Gradio demo
+│   └── auto_resume_train.sh         # crash-resilient training across OOM
+├── configs/
+│   ├── base.yaml                    # paper "base", scaled for M1 16GB
+│   └── tiny.yaml                    # small model for quick sanity checks
+├── tokenizer/                       # trained SentencePiece models (base/, tiny/) — runtime
+├── checkpoints/                     # saved runs + best.pt + leaderboard.json — runtime
+├── logs/                            # TensorBoard event files — runtime
+└── docs/                            # per-module math + implementation write-ups
+    ├── modules/
+    │   ├── embeddings.md
+    │   ├── positional_encoding.md
+    │   ├── multi_head_attention.md
+    │   ├── feed_forward.md
+    │   ├── layer_norm.md
+    │   └── layer_norm_math.md
+    ├── architecture/
+    │   ├── encoder.md
+    │   ├── decoder.md
+    │   └── transformer.md
+    ├── utils/
+    │   ├── data_utils.md
+    │   ├── mask_utils.md
+    │   ├── optimizer.md
+    │   ├── loss.md
+    │   └── train_utils.md
+    └── scripts/
+        ├── train.md
+        ├── inference.md
+        └── evaluate.md

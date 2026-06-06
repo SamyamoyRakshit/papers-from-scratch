@@ -1,0 +1,90 @@
+# ===========================================================
+# Transformer Configuration — Adapted for Apple M1 (16GB)
+# Based on "Attention Is All You Need" (Vaswani et al., 2017)
+# ===========================================================
+#
+# HARDWARE DEVIATION FROM PAPER:
+#   Paper:  8× NVIDIA P100 GPUs (16GB VRAM each, 128GB (8x16GB) total)
+#   Ours:   1× Apple M1 (7-core GPU, 16GB unified memory)
+#
+# MODEL DEVIATION FROM PAPER:
+#   We reduce d_model (512→256), d_ff (2048→1024), num_layers (6→4),
+#   and max_tokens_per_batch (25000→800) to fit within 16GB unified
+#   memory. Without these changes, the model + optimizer states +
+#   activations would exceed available memory and crash or swap to disk.
+#
+#   Paper values (Table 3):
+#     d_model=512, num_heads=8, d_ff=2048, num_layers=6,
+#     batch_size=~25000 tokens, 100K training steps on 8× P100
+#
+# DATA DEVIATION FROM PAPER:
+#   Paper:  WMT 2014 English-German (4.5M pairs)
+#   Ours:   AI4Bharat Samanantar English-Bengali (8.5M pairs)
+#   We use a subset (~500K-2M pairs) for practical training time on M1.
+#
+# Everything else (optimizer, label smoothing, warmup, dropout)
+# follows the paper exactly.
+# ===========================================================
+
+# --- Model Architecture (Section 3, Table 3) ---
+model:
+  d_model: 256          # Paper: 512, Table 3 (reduced for M1 memory)
+  num_heads: 8          # Paper: 8, Table 3 (same as paper ✓) — 256/8 = 32 per head
+  d_ff: 1024            # Paper: 2048, Table 3 (reduced, proportional to d_model)
+  num_layers: 4         # Paper: 6, Table 3 (reduced for M1 memory + speed)
+  dropout: 0.1          # Paper: 0.1, Section 5.4 (same as paper ✓)
+  max_len: 5000         # Max sequence length for positional encoding, Not specified in paper
+
+# --- Training (Section 5) ---
+training:
+  max_tokens_per_batch: 800 #1000 #8000   # ~800 tokens per batch (total) — Paper: ~25K src + ~25K tgt, Section 5.1 (slashed for M1 memory; 800 for 500K-row training where MPS cache pressure accumulates over ~15K steps/epoch)
+  max_seq_len: 64   #80 #128       # Not specified in paper (we cap for memory; lowered from 80 → 64 — most pairs are <64 tokens anyway; trims worst-case attention from 80²=6400 to 64²=4096 per head)
+  num_epochs: 30           # Paper: 100K steps, Section 5.2; extended from 10 → 30 to give the 500K-data model more training (val_loss was still decreasing at epoch 10)
+  label_smoothing: 0.1         # Paper: 0.1, Section 5.4 (same as paper ✓)
+  warmup_steps: 4000           # Paper: 4000, Section 5.3 (same as paper ✓)
+  clip_grad_norm: 1.0          # Max gradient norm — not in paper, safety net against exploding gradients
+  val_split: 0.1               # Fraction of data reserved for validation (10%)
+
+# --- Optimizer (Section 5.3 — all same as paper ✓) ---
+optimizer:
+  betas: [0.9, 0.98]    # Paper: β₁=0.9, β₂=0.98, Section 5.3
+  eps: 1.0e-9            # Paper: ε=10⁻⁹, Section 5.3
+
+# --- Data ---
+data:
+  src_lang: "en"         # Source language
+  tgt_lang: "bn"         # Target language
+  dataset: "ai4bharat/samanantar"   # HuggingFace dataset
+  max_rows: 500000 #100000       # 500K rows (full dataset: 8.5M)
+  vocab_size: 16000      # Paper: ~37000, Section 5.1 (reduced — 16K is better for 500K pairs)
+  num_workers: 0         # Data loading workers — 0 = main process only (safe for macOS/MPS)
+  filter_max_ratio: 5.0  # Drop pairs where max(src_len, tgt_len) / min(...) > this (skew filter)
+  filter_min_words: 1    # Drop pairs where either side has fewer words than this
+
+# --- Inference (Section 6.1) ---
+inference:
+  beam_size: 4 #2          # Paper: 4, Section 6.1 (kept at 4 — best BLEU for this model; drop to 2 for cheaper decode)
+  length_penalty: 1 #0.6   # Paper: 0.6 (Wu et al. 2016, WMT-tuned), Section 6.1 — set to 1.0: the under-trained model emits <eos> early, so α=1.0 rewards longer outputs (best BLEU; see article §6)
+
+# --- Special Tokens ---
+tokens:
+  pad_idx: 0    # <pad> token index - padding
+  sos_idx: 1    # <start of the sentence> token index - start of sentence (decoder input starts with this)
+  eos_idx: 2    # <end of the sentence> token index - end of sentence (model learns to predict this to stop)
+  unk_idx: 3    # <unknown> token index - unknown token (rare/unseen words)
+
+# --- Seed ---
+# The random seed often used in programming, particularly in machine learning
+# (random.seed(42)), is 42. This is a direct pop-culture reference to Douglas Adams'
+# The Hitchhiker's Guide to the Galaxy, where a supercomputer determines "42" is the
+# "Answer to the Ultimate Question of Life, the Universe, and Everything". (source: https://medium.com/@karimanalytics/ever-wondered-why-you-often-see-42-as-a-random-seed-in-machine-learning-codes-77bbbbfbcaf0)
+seed: 42
+
+# --- Device ---
+device: "auto"  # "auto" -> MPS/CUDA if available, else CPU. Options: "auto", "mps", "cpu", "cuda"
+
+# --- Paths ---
+paths:
+  checkpoint_dir: "transformer/checkpoints/base/"
+  log_dir: "transformer/logs/base/"
+  tokenizer_path: "transformer/tokenizer/base/sp.model"

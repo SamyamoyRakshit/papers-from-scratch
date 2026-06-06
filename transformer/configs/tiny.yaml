@@ -1,0 +1,73 @@
+# ===========================================================
+# Transformer Tiny Configuration — For Debugging & Testing
+# ===========================================================
+#
+# NOT for producing a good model.
+# Use this to verify the training pipeline works correctly
+# before switching to base.yaml for real training.
+#
+# Trains in ~2 minutes — catches bugs fast.
+# ===========================================================
+
+# --- Model Architecture ---
+model:
+  d_model: 64           # Tiny model dimension
+  num_heads: 4          # 64/4 = 16 per head
+  d_ff: 256             # Tiny feed-forward dimension
+  num_layers: 2         # Minimal encoder/decoder layers
+  dropout: 0.1          # Paper: 0.1, Section 5.4 (same as paper ✓)
+  max_len: 512          # Short sequences only
+
+# --- Training ---
+training:
+  max_tokens_per_batch: 2000   # Small batches for fast iteration
+  max_seq_len: 64              # Short sequences
+  num_epochs: 20 #5                # Few epochs — just checking if loss goes down
+  label_smoothing: 0.1         # Paper: 0.1, Section 5.4 (same as paper ✓)
+  warmup_steps: 400            # Shorter warmup for fewer steps
+  clip_grad_norm: 1.0          # Max gradient norm — not in paper, safety net against exploding gradients
+  val_split: 0.1               # Fraction of data reserved for validation (10%)
+
+# --- Optimizer (Section 5.3 — all same as paper ✓) ---
+optimizer:
+  betas: [0.9, 0.98]    # Paper: β₁=0.9, β₂=0.98, Section 5.3
+  eps: 1.0e-9            # Paper: ε=10⁻⁹, Section 5.3
+
+# --- Data ---
+data:
+  src_lang: "en"         # Source language
+  tgt_lang: "bn"         # Target language
+  dataset: "ai4bharat/samanantar"   # HuggingFace dataset
+  max_rows: 1000         # Only 1000 rows — enough to verify pipeline
+  vocab_size: 4000       # Small vocab for fast testing
+  num_workers: 0         # Data loading workers — 0 = main process only (safe for macOS/MPS)
+  filter_max_ratio: 5.0  # Drop pairs where max(src_len, tgt_len) / min(...) > this (skew filter)
+  filter_min_words: 1    # Drop pairs where either side has fewer words than this
+
+# --- Inference (Section 6.1) ---
+inference:
+  beam_size: 2          # Paper: 4, Section 6.1. Reduced to 2 for cheaper decode on small model.
+  length_penalty: 0.6   # Paper: 0.6, Section 6.1 (Wu et al. 2016, WMT-tuned)
+
+# --- Special Tokens ---
+tokens:
+  pad_idx: 0    # <pad> token index
+  sos_idx: 1    # <start of the sentence> token index
+  eos_idx: 2    # <end of the sentence> token index
+  unk_idx: 3    # <unknown> token index
+
+# --- Seed ---
+# The random seed often used in programming, particularly in machine learning
+# (random.seed(42)), is 42. This is a direct pop-culture reference to Douglas Adams'
+# The Hitchhiker's Guide to the Galaxy, where a supercomputer determines "42" is the
+# "Answer to the Ultimate Question of Life, the Universe, and Everything".  (source: https://medium.com/@karimanalytics/ever-wondered-why-you-often-see-42-as-a-random-seed-in-machine-learning-codes-77bbbbfbcaf0)
+seed: 42
+
+# --- Device ---
+device: "auto"  # "auto" → MPS/CUDA if available, else CPU. Options: "auto", "mps", "cpu", "cuda"
+
+# --- Paths ---
+paths:
+  checkpoint_dir: "transformer/checkpoints/tiny/"
+  log_dir: "transformer/logs/tiny/"
+  tokenizer_path: "transformer/tokenizer/tiny/sp.model"

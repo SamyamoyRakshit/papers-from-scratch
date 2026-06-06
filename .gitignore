@@ -5,9 +5,14 @@ __pycache__/
 *.pyd
 *.pyo
 
+# Secrets
+.env
+.env.*
+!.env.example
+
 # Virtual environments
 .venv/
-.venv-paper-replication/
+.venv-papers-replication/
 env/
 venv/
 
@@ -45,5 +50,19 @@ uv.lock
 # Models
 ViT/models
 
+# Training artifacts — runtime outputs, not source.
+# `.pt` files in `released/` (or anywhere else) still go through LFS via .gitattributes.
+checkpoints/
+logs/
+
+# Generated preprocessing assets — rebuilt from the dataset on first run.
+tokenizer/
+
 # Markdowns
 # ViT/just_for_knowledge.md
+
+# gradio
+.gradio
+
+# Claude Code's guide
+CLAUDE.md
