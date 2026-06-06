@@ -61,8 +61,6 @@ This is not a "here is the clean final code" tutorial. The clean code is the eas
 
 It is fully self-contained: everything you need to understand the model is here, and every claim points at the real source file in this repository so you can read the actual implementation, not a sanitized snippet.
 
-**Code:** [gitlab.sigmoid.com/article_hackathon/article-hackathon-id-17](https://gitlab.sigmoid.com/article_hackathon/article-hackathon-id-17) — full source, plus the trained tokenizer and both checkpoints (via Git LFS).
-
 ---
 
 ## Why build it from scratch — and why on a 16GB Mac?
@@ -1087,6 +1085,7 @@ The codebase is deliberately readable: every module in its own file, every paper
 8. Post, M. (2018). **A Call for Clarity in Reporting BLEU Scores** (sacreBLEU). [arXiv:1804.08771](https://arxiv.org/abs/1804.08771)
 
 **Explainers (the genuinely best on each topic)**
+
 9. Alammar, J. **The Illustrated Transformer.** [jalammar.github.io/illustrated-transformer](https://jalammar.github.io/illustrated-transformer/) — best intuition for Q/K/V and multi-head.
 10. Alammar, J. **Visualizing A Neural Machine Translation Model.** [jalammar.github.io](https://jalammar.github.io/visualizing-neural-machine-translation-mechanics-of-seq2seq-models-with-attention/)
 11. Kazemnejad, A. **Transformer Architecture: The Positional Encoding.** [kazemnejad.com](https://kazemnejad.com/blog/transformer_architecture_positional_encoding/) — the relative-position property.
