@@ -115,6 +115,157 @@ docs/       # per-module math + implementation write-ups
 ARTICLE.md  # the full long-form article
 ```
 
+## How the pieces fit together
+
+### Paper → code
+
+| Paper section | What it implements | File |
+|---|---|---|
+| §3.4 — embedding scale (√d_model) | scale token vectors so PE is a gentle perturbation | [`models/modules/embeddings.py`](models/modules/embeddings.py) |
+| §3.5 — positional encoding | inject word order via sinusoids | [`models/modules/positional_encoding.py`](models/modules/positional_encoding.py) |
+| §3.2 — scaled dot-product + multi-head attention | `softmax(QKᵀ/√dₖ)V`, split into 8 parallel heads | [`models/modules/multi_head_attention.py`](models/modules/multi_head_attention.py) |
+| §3.3 — position-wise FFN | per-token 2-layer MLP (expand → ReLU → compress) | [`models/modules/feed_forward.py`](models/modules/feed_forward.py) |
+| Ba et al. 2016 — layer normalization | normalize each token independently across features | [`models/modules/layer_norm.py`](models/modules/layer_norm.py) |
+| §3.1 — encoder stack | N × (self-attn + FFN) with residuals + post-LayerNorm | [`models/encoder.py`](models/encoder.py) |
+| §3.1 — decoder stack | N × (masked-self-attn + cross-attn + FFN) | [`models/decoder.py`](models/decoder.py) |
+| §3.4 — full model + weight tying | wire encoder + decoder + share one embedding matrix | [`models/transformer.py`](models/transformer.py) |
+| §3.2.3 — masking | padding mask + causal mask, combined for the decoder | [`utils/mask_utils.py`](utils/mask_utils.py) |
+| §5.4 — label-smoothed loss | fused cross-entropy with ε=0.1 smoothing | [`utils/loss.py`](utils/loss.py) |
+| §5.3 — Noam LR schedule | Adam + linear warmup + step^-0.5 decay | [`utils/optimizer.py`](utils/optimizer.py) |
+| §5.1 — data pipeline | SentencePiece tokenizer + token-based batching | [`utils/data_utils.py`](utils/data_utils.py) |
+| §6.1 — beam search | pooled top-k beams + length penalty | [`scripts/inference.py`](scripts/inference.py) |
+
+### Training flow
+
+```
+AI4Bharat Samanantar (8.5M En-Bn pairs, 500K subset)
+             │
+             │  utils/data_utils.py
+             ▼
+   SentencePiece tokenizer — 16K shared vocab (English + Bengali)
+             │
+             ▼
+   Token-batched DataLoader — ≤800 tokens/batch, sorted by length
+             │
+     ┌───────┴───────────────────────────────────────────┐
+     │                                                   │
+     ▼                                                   ▼
+  src tokens                                        tgt tokens (shifted right)
+  embeddings + positional_encoding                  embeddings + positional_encoding
+     │                                                   │
+     ▼                                                   │
+  encoder.py                                             │
+  N × (self-attn + FFN)                                  │
+     │                                                   │
+     │  memory (batch, src_len, d_model)                 │
+     └──────────────────────────────────────▶  decoder.py
+                                               N × (masked-self-attn
+                                                  + cross-attn + FFN)
+                                                         │
+                                                         ▼
+                                              logits (batch, tgt_len, vocab)
+                                                         │
+                                                         │  utils/loss.py
+                                                         ▼
+                                              label-smoothed cross-entropy
+                                                         │
+                                                         │  utils/optimizer.py
+                                                         ▼
+                                              Adam + Noam LR (step^-0.5)
+                                                         │
+                                                         │  utils/train_utils.py
+                                                         ▼
+                                              checkpoint + leaderboard.json
+```
+
+### Inference flow
+
+```
+"What are you saying?"  (English)
+             │
+             │  scripts/inference.py
+             ▼
+   SentencePiece tokenize  →  token IDs
+             │
+             │  models/transformer.py → run_encoder_stack()
+             ▼
+   Encoder  →  memory          ← computed ONCE per source sentence
+             │
+             ▼
+   beam search — generate the Bengali one token at a time (beam_size=4, α=1.0):
+
+      start: <sos>
+        │
+        ▼
+      ┌──────────────────────────────────────────────────┐
+      │  LOOP (one pass = one new token):                │
+      │    1. Decoder(so-far, memory)  →  logits         │
+      │    2. pick the top few next-word candidates      │
+      │    3. keep the 4 best partial sentences (beams)  │
+      └──────────────────────────────────────────────────┘
+        │
+        ▼  repeat the loop until each sentence hits <eos> (or 64 tokens)
+        │
+        ▼
+   finished sentences  →  pick the best (score ÷ length^α)
+             │
+             ▼
+   SentencePiece detokenize  →  "তুমি কি বলছ?"  (Bengali)
+```
+
+> The Gradio demo ([`scripts/app.py`](scripts/app.py)) is this same flow wrapped in a browser UI — it loads the model once at startup and calls the same `translate()`; the sliders just set `beam_size` and `α` per request.
+
+### Evaluation flow
+
+```
+   config + tokenizer + checkpoint
+             │
+             │  scripts/evaluate.py
+             ▼
+   load val split  ──  SAME seed / max_rows / val_split as training
+             │           → the exact pairs the model never trained on
+             ▼
+   cap to --max_samples (default 500; full val is too slow under beam search)
+             │
+             ▼
+   for each (English src, Bengali ref):
+        translate(src) via beam search   ← reuses scripts/inference.py
+        collect  hypothesis + reference
+             │
+     ┌───────┴─────────────────────────────────────┐
+     ▼                                             ▼
+  Perplexity = exp(checkpoint val_loss)      Corpus BLEU = sacrebleu(hyps, refs)
+  (intrinsic — full val set, stable)         (extrinsic — `intl` tokenizer for Bengali)
+     │                                             │
+     └───────┬─────────────────────────────────────┘
+             ▼
+   print BLEU + brevity penalty + sample translations
+```
+
+### Build order
+
+Written strictly bottom-up — each layer only depends on what's below it:
+
+```
+1. models/modules/
+   embeddings → positional_encoding → multi_head_attention → feed_forward → layer_norm
+
+2. models/encoder.py + models/decoder.py
+   stack the modules with residuals; decoder adds a cross-attention sub-layer
+
+3. models/transformer.py
+   wire encoder + decoder + output projection + weight tying
+
+4. utils/
+   config → mask_utils → loss → optimizer → data_utils → train_utils → logging_setup
+
+5. scripts/
+   train → inference → evaluate + app  (both reuse inference's translate())
+   auto_resume_train.sh wraps train
+```
+
+---
+
 ## Citation
 
 Replicates the original paper (citation is for the authors, not the implementer):

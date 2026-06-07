@@ -108,7 +108,7 @@ There is no recurrence and no convolution. The only mechanism that moves informa
 
 ## What changed (and what was refused to change)
 
-Replicating a paper on a laptop is an exercise in honest compromise. Here is exactly where this build deviated from "Attention Is All You Need" and where it held the line. Nearly every value below lives in `configs/base.yaml`, each with the reason attached as a comment.
+Replicating a paper on a laptop is an exercise in honest compromise. Here is exactly where this build deviated from "Attention Is All You Need" and where it held the line. Nearly every value below lives in [`configs/base.yaml`](configs/base.yaml), each with the reason attached as a comment.
 
 | Knob | Paper (base) | This Build (M1 16GB) | Why |
 |---|---|---|---|
@@ -196,17 +196,15 @@ The last three directories are the **shipped artifacts** — the repo carries th
 
 Everything below runs from the **repository root** (the folder *above* `transformer/`), because the scripts are invoked as modules — that is what makes the package imports resolve from any directory.
 
-**Environment.** Python 3.12, managed with [`uv`](https://github.com/astral-sh/uv). The trained weights ship via **Git LFS**, so install it *before* cloning — otherwise the checkpoints arrive as tiny pointer files instead of real weights:
+**Environment.** Python 3.12, managed with [`uv`](https://github.com/astral-sh/uv):
 
 ```bash
-git lfs install            # weights ship via Git LFS — do this before cloning
-git clone https://gitlab.sigmoid.com/article_hackathon/article-hackathon-id-17.git
-cd article-hackathon-id-17
+git clone https://github.com/samyamoyrakshit/Replicating-Papers-On-CustomData.git
+cd Replicating-Papers-On-CustomData
 uv sync                    # installs torch, sentencepiece, sacrebleu, gradio, … from pyproject.toml
-git lfs pull               # only needed if you cloned before installing git-lfs
 ```
 
-The repo ships the trained SentencePiece tokenizer and two checkpoints (the 10- and 30-epoch runs), so you can translate a sentence immediately — no training required.
+Checkpoints, logs, and the trained tokenizer are not in this repo (kept gitignored to stay light — see [README](README.md)). The first training run trains and caches the SentencePiece tokenizer; every later run loads it and verifies its SHA-256 against the checkpoint.
 
 **Train.** The plain entrypoint reads `configs/base.yaml` by default. On a 16GB Mac you want the wrapper instead — it re-launches training after every MPS OOM and resumes from the latest checkpoint, with `caffeinate` to stop the laptop sleeping mid-run:
 
@@ -255,7 +253,7 @@ uv run tensorboard --logdir transformer/logs/base/
 uv run python -m transformer.scripts.app   # serves http://127.0.0.1:7860 (gradio is already a dependency)
 ```
 
-The checkpoint path is set at the top of `scripts/app.py`; the sliders default to `beam=4, α=1.0` (the best-BLEU setting from Part 6).
+The checkpoint path is set at the top of [`scripts/app.py`](scripts/app.py); the sliders default to `beam=4, α=1.0` (the best-BLEU setting from Part 6).
 
 > ![Gradio demo — English → Bengali translation UI](markdown_images/gradio_demo.png)
 >
@@ -275,7 +273,7 @@ A careful reader of the paper stops at Section 3.4:
 
 > "In the embedding layers, we multiply those weights by √d_model."
 
-Four characters of code, a genuinely deep reason. (`models/modules/embeddings.py`)
+Four characters of code, a genuinely deep reason. ([`models/modules/embeddings.py`](models/modules/embeddings.py))
 
 ```python
 def forward(self, x):
@@ -305,7 +303,7 @@ decimal   binary       ← bit 0 flips every step (fast),
    4       1 0 0
 ```
 
-Take `"I love AI"` with `d_model=4`. The division term works out to `[1.0, 0.01]`, and: (`models/modules/positional_encoding.py`)
+Take `"I love AI"` with `d_model=4`. The division term works out to `[1.0, 0.01]`, and: ([`models/modules/positional_encoding.py`](models/modules/positional_encoding.py))
 
 ```
 pe =
@@ -355,7 +353,7 @@ This is also why fixed sinusoids can **extrapolate** to sequences longer than an
 
 ## 1.4 Self-attention: the heart, with a worked example
 
-This is the module the whole paper is named after. Strip away the multi-head bookkeeping and it is three matrix multiplies and a softmax. (`models/modules/multi_head_attention.py`)
+This is the module the whole paper is named after. Strip away the multi-head bookkeeping and it is three matrix multiplies and a softmax. ([`models/modules/multi_head_attention.py`](models/modules/multi_head_attention.py))
 
 **Q, K, V — three roles for every token.** Each token's vector is projected by three different learned matrices into three roles:
 
@@ -450,7 +448,7 @@ The projections use **Xavier-uniform** init (matching PyTorch's own `nn.Multihea
 
 ## 1.6 Masking: padding masks, causal masks, and the NaN that lives in them
 
-Two different masks, two different jobs. Both work by setting forbidden scores to `-inf` *before* softmax, so `e^(-inf) = 0` gives those positions zero weight. (`utils/mask_utils.py`)
+Two different masks, two different jobs. Both work by setting forbidden scores to `-inf` *before* softmax, so `e^(-inf) = 0` gives those positions zero weight. ([`utils/mask_utils.py`](utils/mask_utils.py))
 
 **Padding mask** — batches mix sentences of different lengths, so short ones are padded with `<pad>`. The padding mask blocks every query from attending to `<pad>` *keys* (columns):
 
@@ -483,7 +481,7 @@ In normal training with clean data this never triggers (every real sentence has 
 
 ## 1.7 Layer normalization: stabilizing each token independently
 
-After each sub-layer, the Transformer normalizes. But **not** like a CNN. BatchNorm normalizes across the batch dimension — fine for fixed-size images, a disaster for variable-length sequences where batch statistics shift wildly with padding and sentence length. **LayerNorm normalizes across the feature dimension, per token, independently of every other token and the batch size.** (`models/modules/layer_norm.py`)
+After each sub-layer, the Transformer normalizes. But **not** like a CNN. BatchNorm normalizes across the batch dimension — fine for fixed-size images, a disaster for variable-length sequences where batch statistics shift wildly with padding and sentence length. **LayerNorm normalizes across the feature dimension, per token, independently of every other token and the batch size.** ([`models/modules/layer_norm.py`](models/modules/layer_norm.py))
 
 ```python
 mean = x.mean(dim=-1, keepdim=True)                 # one mean per token
@@ -507,7 +505,7 @@ Each token is independently rescaled to zero mean, unit variance — then a lear
 
 ## 1.8 The position-wise feed-forward network
 
-Between attention sub-layers sits a small MLP applied to **each position independently and identically**: (`models/modules/feed_forward.py`)
+Between attention sub-layers sits a small MLP applied to **each position independently and identically**: ([`models/modules/feed_forward.py`](models/modules/feed_forward.py))
 
 ```
 FFN(x) = max(0, x·W₁ + b₁)·W₂ + b₂
@@ -520,7 +518,7 @@ FFN(x) = max(0, x·W₁ + b₁)·W₂ + b₂
 
 ## 1.9 How the encoder works
 
-One **EncoderLayer** is two sub-layers, each wrapped in the **post-LayerNorm residual** recipe `LayerNorm(x + Dropout(sublayer(x)))`: (`models/encoder.py`)
+One **EncoderLayer** is two sub-layers, each wrapped in the **post-LayerNorm residual** recipe `LayerNorm(x + Dropout(sublayer(x)))`: ([`models/encoder.py`](models/encoder.py))
 
 ```
  src
@@ -567,7 +565,7 @@ Early layers capture local patterns; later layers capture long-range dependencie
 
 ## 1.10 How the decoder works: masked self-attention + cross-attention
 
-The **DecoderLayer** has *three* sub-layers (the encoder had two): (`models/decoder.py`)
+The **DecoderLayer** has *three* sub-layers (the encoder had two): ([`models/decoder.py`](models/decoder.py))
 
 ```
  tgt
@@ -643,7 +641,7 @@ Multiplying by V collapses the `src_len` dimension away, so the output length al
 
 ## 1.11 Putting it together: the full model and weight tying
 
-`Transformer.forward` reads almost like the paper's figure: (`models/transformer.py`)
+`Transformer.forward` reads almost like the paper's figure: ([`models/transformer.py`](models/transformer.py))
 
 ```python
 src_embedded = self.positional_encoding(self.src_embedding(src))
@@ -703,7 +701,7 @@ Because a single shared SentencePiece vocabulary covers both English and Bengali
 
 # Part 2 — The training objective: label smoothing, KL divergence, and why it OOM'd
 
-The loss function is where two of this project's most instructive lessons live. (`utils/loss.py`)
+The loss function is where two of this project's most instructive lessons live. ([`utils/loss.py`](utils/loss.py))
 
 ## 2.1 Label smoothing — the idea
 
@@ -760,7 +758,7 @@ Same loss, a fraction of the memory. The repo keeps the original KL version comm
 
 ## 2.4 The learning-rate schedule nobody can skip
 
-The Transformer does not use a constant learning rate. It uses the **Noam schedule** (Section 5.3): warm up linearly for 4000 steps, then decay as `step^(-0.5)`. (`utils/optimizer.py`)
+The Transformer does not use a constant learning rate. It uses the **Noam schedule** (Section 5.3): warm up linearly for 4000 steps, then decay as `step^(-0.5)`. ([`utils/optimizer.py`](utils/optimizer.py))
 
 ```python
 lr = d_model**(-0.5) * min(step**(-0.5), step * warmup_steps**(-1.5))
@@ -779,7 +777,7 @@ lr = d_model**(-0.5) * min(step**(-0.5), step * warmup_steps**(-1.5))
 
 # Part 3 — Data: teaching it Bengali
 
-The paper translates English to German on WMT'14. This project chose something harder and more personal: **English → Bengali**, using the **AI4Bharat Samanantar** corpus — the largest publicly available parallel corpus for Indian languages (8.5M English-Bengali pairs). (`utils/data_utils.py`)
+The paper translates English to German on WMT'14. This project chose something harder and more personal: **English → Bengali**, using the **AI4Bharat Samanantar** corpus — the largest publicly available parallel corpus for Indian languages (8.5M English-Bengali pairs). ([`utils/data_utils.py`](utils/data_utils.py))
 
 A single **SentencePiece** model (`vocab_size = 16000`) was trained over the combined English+Bengali text, giving one shared subword vocabulary across both languages. Subword tokenization matters enormously for Bengali — a morphologically rich script where word-level vocabularies explode. Four special tokens anchor the scheme: `<pad>=0`, `<sos>=1`, `<eos>=2`, `<unk>=3`.
 
@@ -794,7 +792,7 @@ A single **SentencePiece** model (`vocab_size = 16000`) was trained over the com
 
 # Part 4 — Training on 16GB: the war stories
 
-This is the part no clean tutorial tells you. Building the model is the quick part; getting it to *train* without crashing on 16GB is where the real work is. (`utils/train_utils.py`, `scripts/train.py`)
+This is the part no clean tutorial tells you. Building the model is the quick part; getting it to *train* without crashing on 16GB is where the real work is. ([`utils/train_utils.py`](utils/train_utils.py), [`scripts/train.py`](scripts/train.py))
 
 ## War story 1 — The memory ceiling
 
@@ -848,7 +846,7 @@ Thirty epochs at 15,784 steps each means the process can be interrupted — by a
 
 # Part 5 — Production-grade infrastructure on a laptop
 
-This is the section that separates "I ran a notebook once" from "I can reproduce this run a year from now." None of it is in the paper, and almost none of it is in any from-scratch tutorial — but it is exactly the engineering that makes a replication *trustworthy*. It all lives in `scripts/train.py` and `utils/train_utils.py`.
+This is the section that separates "I ran a notebook once" from "I can reproduce this run a year from now." None of it is in the paper, and almost none of it is in any from-scratch tutorial — but it is exactly the engineering that makes a replication *trustworthy*. It all lives in [`scripts/train.py`](scripts/train.py) and [`utils/train_utils.py`](utils/train_utils.py).
 
 **Every checkpoint knows exactly which code, tokenizer, and data produced it.** Each saved checkpoint carries three fingerprints:
 
@@ -886,7 +884,7 @@ else:
 
 # Part 6 — Inference: beam search, and the model that stops too soon
 
-A trained model gives a probability distribution over the next token. Turning that into a sentence is its own problem. (`scripts/inference.py`)
+A trained model gives a probability distribution over the next token. Turning that into a sentence is its own problem. ([`scripts/inference.py`](scripts/inference.py))
 
 **Encode once, decode in a loop.** `memory` depends only on the source, so the encoder runs **once**; the decoder loops, reusing `memory` every step. Re-encoding inside the loop would re-compute the same thing dozens of times — pure waste.
 
@@ -937,7 +935,7 @@ The model learned *real* mappings but is brittle to surface variation — a capa
 
 # Part 7 — Evaluation: the numbers, told honestly
 
-(`scripts/evaluate.py`)
+([`scripts/evaluate.py`](scripts/evaluate.py))
 
 Training ran for **30 epochs total** (~47 hours wall-clock on M1: ~15h for the first 10, ~32h for the remaining 20), at ~2.0–3.4 it/s. Per-epoch val loss across the full run:
 
