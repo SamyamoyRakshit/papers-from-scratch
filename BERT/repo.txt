@@ -1,0 +1,81 @@
+.
+#
+# Reuse legend (relative to ../transformer/):
+#   [import] NOT a local file — imported directly from transformer/ (zero changes, single source of truth)
+#   [tweak]  copied here with one small change
+#   [adapt]  reuse the pattern, rewrite the body for BERT
+#   [new]    BERT-specific, written from scratch
+#
+# Imported from ../transformer/ (apple-to-apple, no change — run from repo root so
+# `transformer` resolves as a package; both modules import only torch, no relative deps):
+#   transformer/models/modules/multi_head_attention.py  → MultiHeadAttention
+#   transformer/models/modules/layer_norm.py            → LayerNorm
+#   transformer/utils/logging_setup.py                  → logging config
+#
+├── ARTICLE.md                       # Long-form write-up of the build (the article)
+├── README.md                        # Setup + how to run + results
+├── repo.txt                         # This annotated file tree
+├── requirements.txt                 # pip fallback (pyproject.toml at repo root is the source of truth)
+├── just_for_knowledge.md            # Theory + math + paper notes (scratch)
+├── markdown_images/                 # Figures used in ARTICLE.md
+│   ├── bert_architecture.png        # Paper Figure 1 — pre-training + fine-tuning
+│   ├── input_embeddings.png         # Paper Figure 2 — token + segment + position sum
+│   ├── mlm_nsp.png                  # The two pre-training objectives
+│   └── attention_bidirectional.png  # bidirectional vs causal (BERT vs GPT)
+├── models/
+│   ├── __init__.py
+│   ├── bert.py                      # [new]   full model: embeddings + encoder + pooler ([CLS])
+│   ├── encoder.py                   # [tweak] copy of transformer's; only change = FFN import line → BERT's GELU feed_forward (MHA+LayerNorm still imported from transformer)
+│   ├── heads.py                     # [new]   MLM head (weight-tied to token emb) + NSP head
+│   └── modules/
+│       ├── __init__.py
+│       ├── embeddings.py            # [new]   token + SEGMENT + LEARNED position, summed + LayerNorm + dropout (NO √d_model)
+│       └── feed_forward.py          # [tweak] copy of transformer's; swap nn.ReLU() → nn.GELU()
+│       # MultiHeadAttention, LayerNorm → [import] from ../transformer (see header)
+│       # positional_encoding NOT used — BERT learns position emb inside embeddings.py
+├── utils/
+│   ├── __init__.py
+│   ├── config.py                    # [adapt] pydantic YAML config; add mlm_probability, num_segments, task fields
+│   ├── mask_utils.py                # [tweak] keep create_padding_mask / create_src_mask; DROP causal/tgt/memory masks
+│   ├── masking.py                   # [new]   MLM masking: 15% of tokens → 80% [MASK] / 10% random / 10% keep
+│   ├── nsp.py                       # [new]   NSP pair builder: 50% true next-sentence, 50% random sentence B
+│   ├── loss.py                      # [adapt] reuse F.cross_entropy approach; MLM CE (masked only) + NSP CE
+│   ├── optimizer.py                 # [adapt] same builder shape; AdamW + linear warmup→linear decay (not Noam)
+│   ├── data_utils.py                # [adapt] tokenizer+batching pattern; new: WordPiece + [CLS]/[SEP] + MLM/NSP examples
+│   └── train_utils.py               # [adapt] training loop + checkpointing; handle two losses + two-phase
+│       # logging_setup → [import] from ../transformer (see header)
+├── scripts/
+│   ├── _common.py                   # [adapt] shared model/checkpoint build+load helpers
+│   ├── pretrain.py                  # [adapt] from train.py — PRE-TRAINING entrypoint: MLM + NSP on unlabeled corpus
+│   ├── finetune.py                  # [new]   FINE-TUNING: load pretrained, add task head, train on labels
+│   ├── evaluate.py                  # [adapt] downstream metrics (accuracy / F1) on the fine-tune task
+│   ├── inference.py                 # [new]   fill-mask demo + [CLS] sentence embeddings
+│   └── app.py                       # [new]   optional local Gradio fill-mask / classification demo
+├── configs/
+│   ├── base.yaml                    # BERT-base recipe (L=12,H=768,A=12), scaled down for M1 16GB
+│   ├── tiny.yaml                    # small model for quick pipeline sanity checks
+│   └── finetune.yaml                # fine-tuning hyperparams (lr, epochs, task head)
+├── tokenizer/                       # trained WordPiece model — runtime, gitignored
+├── checkpoints/                     # pretrained + fine-tuned .pt + leaderboard.json — runtime, gitignored
+├── logs/                            # TensorBoard event files — runtime, gitignored
+└── docs/                            # per-module math + implementation write-ups
+    ├── modules/
+    │   ├── embeddings.md             # why three embeddings summed; learned vs sinusoidal PE
+    │   ├── feed_forward.md           # GELU vs ReLU
+    │   └── reused_from_transformer.md  # note: MHA + LayerNorm imported, not re-documented
+    ├── architecture/
+    │   ├── encoder.md                # the bidirectional encoder stack (ReLU→GELU difference)
+    │   ├── bert.md                   # full model + pooler + [CLS]/[SEP] roles
+    │   └── heads.md                  # MLM head (weight tying) + NSP head
+    ├── objectives/
+    │   ├── mlm.md                    # masked language modeling — the 80/10/10 rule and why
+    │   └── nsp.md                    # next sentence prediction — pair sampling + the [CLS] signal
+    ├── utils/
+    │   ├── data_utils.md             # corpus → WordPiece → MLM/NSP examples → batches
+    │   ├── mask_utils.md             # padding mask only
+    │   ├── optimizer.md              # AdamW + warmup/linear-decay
+    │   └── loss.md                   # combined MLM + NSP loss
+    └── scripts/
+        ├── pretrain.md               # the pre-training run
+        ├── finetune.md               # the fine-tuning run
+        └── inference.md              # fill-mask + embeddings
