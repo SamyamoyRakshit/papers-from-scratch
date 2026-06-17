@@ -25,14 +25,14 @@ This page only covers **what BERT changes**.
 |---|---|---|
 | `MultiHeadAttention` | imported from `transformer/` | reused unchanged |
 | `LayerNorm` | imported from `transformer/` | reused, but **ε = 1e-12** (not 1e-5) |
-| Feed-forward network | local [`feed_forward.py`](../modules/feed_forward.md) | **GELU** instead of ReLU |
+| Feed-forward network | local [`feed_forward.py`](../../models/modules/feed_forward.py) | **GELU** instead of ReLU |
 | Block structure (post-LN) | same as Transformer | no |
 | Masking | padding mask only | no — see below |
 
 So inside the encoder there is exactly **one architectural change** — ReLU → GELU in the
 FFN ([§A.2](../modules/feed_forward.md#2-the-only-real-change-relu--gelu)) — plus one
 implementation detail, the LayerNorm ε of `1e-12` threaded through to match
-[`BERTEmbeddings`](../modules/embeddings.md).
+[`BERTEmbeddings`](../../models/modules/embeddings.py).
 
 ## One layer (post-LN)
 
@@ -83,8 +83,34 @@ flows both ways at every layer — the property the MLM objective is built to ex
 | BERT-large | 24 | 1024 | 16 | 4096 |
 
 Embeddings (token + segment + position) are applied **before** the stack; this module only
-runs the `N` layers. The encoder body alone is ~85M parameters for BERT-base (~110M total
-once embeddings are included).
+runs the `N` layers.
+
+### Where BERT-base's ~110M parameters live
+
+`encoder.py` builds **only the encoder body**, so its param count won't match the "110M"
+usually quoted for BERT-base. That figure is the body **plus** the embedding tables, which
+live in a separate module:
+
+| Part | Built in | Params (BERT-base) |
+|---|---|---|
+| Encoder body — 12 layers (attention + FFN + LayerNorms) | [`encoder.py`](../../models/encoder.py) | ~85M |
+| Token embedding table — vocab × d_model = 30522 × 768 | [`embeddings.py`](../../models/modules/embeddings.py) | ~23.4M |
+| Position (512 × 768) + segment (2 × 768) tables | [`embeddings.py`](../../models/modules/embeddings.py) | ~0.4M |
+| **Total** | assembled in `bert.py` | **~110M** |
+
+So almost the entire embedding cost is the token table; the encoder body is the larger
+share. The two are combined in `bert.py`.
+
+**How the ~85M body is derived** — per layer (d_model=768, d_ff=3072):
+
+| Sub-part | Formula | Params |
+|---|---|---|
+| Attention — Q, K, V, output projections | 4 × (768×768 + 768) | 2,362,368 |
+| FFN — two linears (768→3072, 3072→768) | (768×3072 + 3072) + (3072×768 + 768) | 4,722,432 |
+| 2 × LayerNorm (γ, β) | 2 × (768 + 768) | 3,072 |
+| **Per layer** | | **7,087,872** |
+
+× 12 layers = **85,054,464** — exactly the count the smoke test prints.
 
 ## References
 
