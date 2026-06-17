@@ -46,6 +46,17 @@ flowchart TB
     ln1 --> add2
     add2 --> ln2[LayerNorm ε=1e-12]
     ln2 --> out([out : B, S, d_model])
+
+    style x fill:#eef,stroke:#99d,color:#000
+    style out fill:#dfd,stroke:#9d9,color:#000
+    style attn fill:#ffd,stroke:#dd9,color:#000
+    style ff fill:#ffd,stroke:#dd9,color:#000
+    style ln1 fill:#fdd,stroke:#f99,color:#000
+    style ln2 fill:#fdd,stroke:#f99,color:#000
+    style d1 fill:#fff,stroke:#999,color:#000
+    style d2 fill:#fff,stroke:#999,color:#000
+    style add1 fill:#fff,stroke:#999,color:#000
+    style add2 fill:#fff,stroke:#999,color:#000
 ```
 
 where **B** = batch size, **S** = sequence length, **d_model** = hidden dimension (768 for
