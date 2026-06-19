@@ -36,8 +36,8 @@ class MLMHead(nn.Module):
     Args:
         d_model (int): Hidden dimension. Example (BERT-base): 768
         embedding_weight (torch.Tensor): The token-embedding weight to tie the
-            decoder to, shape (vocab_size, d_model) — pass
-            `model.embeddings.token_embedding.weight`.
+            decoder (un-embedding projection) to, shape (vocab_size, d_model) —
+            pass `model.embeddings.token_embedding.weight`.
         layer_norm_eps (float): ε for the transform LayerNorm. Default: 1e-12
     """
     def __init__(
