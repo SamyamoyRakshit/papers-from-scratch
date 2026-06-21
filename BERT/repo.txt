@@ -27,6 +27,7 @@
 │   ├── bert.py                      # [new]   full model: embeddings + encoder + pooler ([CLS])
 │   ├── encoder.py                   # [tweak] copy of transformer's; only change = FFN import line → BERT's GELU feed_forward (MHA+LayerNorm still imported from transformer)
 │   ├── heads.py                     # [new]   MLM head (weight-tied to token emb) + NSP head
+│   ├── bert_for_pretraining.py      # [new]   top assembly: BERTModel + BERTPreTrainingHeads (tie + head-init wired here)
 │   └── modules/
 │       ├── __init__.py
 │       ├── embeddings.py            # [new]   token + SEGMENT + LEARNED position, summed + LayerNorm + dropout (NO √d_model)
@@ -66,7 +67,8 @@
     ├── architecture/
     │   ├── encoder.md                # the bidirectional encoder stack (ReLU→GELU difference)
     │   ├── bert.md                   # full model + pooler + [CLS]/[SEP] roles
-    │   └── heads.md                  # MLM head (weight tying) + NSP head
+    │   ├── heads.md                  # MLM head (weight tying) + NSP head
+    │   └── bert_for_pretraining.md   # top assembly: composition + init ordering + why loss stays out
     ├── objectives/
     │   ├── mlm.md                    # masked language modeling — the 80/10/10 rule and why
     │   └── nsp.md                    # next sentence prediction — pair sampling + the [CLS] signal
