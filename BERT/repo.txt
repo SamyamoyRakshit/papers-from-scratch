@@ -70,9 +70,9 @@
     │   ├── heads.md                  # MLM head (weight tying) + NSP head
     │   └── bert_for_pretraining.md   # top assembly: composition + init ordering + why loss stays out
     ├── objectives/
-    │   ├── mlm.md                    # masked language modeling — the 80/10/10 rule and why
     │   └── nsp.md                    # next sentence prediction — pair sampling + the [CLS] signal
     ├── utils/
+    │   ├── masking.md                # MLM masking step: 15% / 80-10-10 rule, line-by-line
     │   ├── data_utils.md             # corpus → WordPiece → MLM/NSP examples → batches
     │   ├── mask_utils.md             # padding mask only
     │   ├── optimizer.md              # AdamW + warmup/linear-decay
