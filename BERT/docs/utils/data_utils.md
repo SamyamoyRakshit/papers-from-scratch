@@ -48,66 +48,96 @@ There are a lot of functions here. This is **who calls whom** — solid arrows a
 calls, and each box is colour-grouped by the file it lives in. Read it top→bottom:
 it's the same order you'd run things.
 
-Each box shows the **function** and, in grey, **what it outputs for one tiny 2-article
-corpus** (`মধুসূদন দত্ত একজন কবি। তিনি ১৮২৪ সালে জন্মান।` ‖ `কলকাতা একটি শহর। এটি বড়।`)
-so the graph isn't abstract:
+This is the **real call flow** — data flows along the arrows, and each helper sits
+**inside the function that calls it** (`_split_sentences` inside ④, `build_nsp_example`
++ `_truncate` inside ⑤, `mask_tokens` inside ⑥). Rounded boxes are **data artifacts**
+passed between steps. The numbers ①–⑦ match the worked trace below.
 
 ```mermaid
 flowchart TD
-    subgraph prep["prepare_corpus.py (run once, separate)"]
-        PC["prepare_corpus()<br/>one article per line"]
-    end
-    TXT[/"bn_wiki.txt<br/>2 articles"/]
-    PC --> TXT
-
-    subgraph du["data_utils.py (this file)"]
-        TT["train_tokenizer()<br/>→ vocab.txt"]
-        LT["load_tokenizer()<br/>reload vocab"]
-        BD["build_documents()<br/>→ 2 docs"]
-        SS["_split_sentences()<br/>। → sentences"]
-        DS["Dataset.__init__()<br/>→ 4 frozen examples"]
-        TR["_truncate()<br/>≤ max_seq_len"]
-        GI["__getitem__(0)<br/>→ masked input_ids"]
-        CF["collate_fn()<br/>pad → (B,S)"]
-        CD["create_dataloader()<br/>shuffle + batch"]
-    end
-
-    subgraph ext["other modules"]
-        NSP["build_nsp_example()<br/>nsp.py · nsp=0"]
-        MSK["mask_tokens()<br/>masking.py · 41→[MASK]"]
-    end
+    PC["① prepare_corpus()"] --> TXT(["bn_wiki.txt"])
+    TT["② train_tokenizer()"] -. saves .-> VOC(["vocab.txt"])
+    VOC --> LT["③ load_tokenizer()"] --> TOK(["tokenizer"])
 
     TXT --> BD
-    TT -. "saves vocab.txt" .-> LT
-    LT --> DS
-    BD --> SS
-    BD --> DS
+    TOK --> BD
+    subgraph S4["④ build_documents()"]
+        BD["build_documents()"] --> SS["_split_sentences()<br/>। → sentences"]
+    end
+    BD --> DOCS(["all_documents<br/>3-level nest"])
 
-    CD --> DS
-    CD --> CF
-    DS --> NSP
-    DS --> TR
-    DS --> GI
-    GI --> MSK
+    DOCS --> CD["create_dataloader()"]
+    TOK --> CD
 
-    GI -- "per item" --> CF
-    CF --> BATCH[/"(B, S) batch dict<br/>input_ids,token_type_ids,<br/>attention_mask,mlm_labels (B,S)<br/>nsp_labels (B,)"/]
+    subgraph S5["⑤ BERTPretrainingDataset"]
+        DSI["__init__()<br/>loop: every sentence → A"]
+        DSI --> NSP["build_nsp_example()<br/>nsp.py"]
+        DSI --> TR["_truncate()"]
+        DSI --> EX(["self.examples<br/>frozen"])
+        EX --> GI["⑥ __getitem__()"]
+        GI --> MSK["mask_tokens()<br/>masking.py"]
+    end
+
+    CD --> DSI
+    CD --> CF["⑦ collate_fn()"]
+    GI -- per item --> CF
+    CF --> BATCH(["(B,S) batch dict"]) --> MODEL["model → loss.py"]
 
     classDef this fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;
     classDef other fill:#fff3e0,stroke:#e65100,color:#bf360c;
     classDef io fill:#f1f8e9,stroke:#558b2f,color:#33691e;
-    class TT,LT,BD,SS,DS,TR,GI,CF,CD this;
-    class NSP,MSK,PC other;
-    class TXT,BATCH io;
+    classDef ext fill:#fce4ec,stroke:#ad1457,color:#880e4f;
+    class BD,SS,LT,TT,DSI,TR,GI,CF,CD this;
+    class PC other;
+    class NSP,MSK ext;
+    class TXT,VOC,TOK,DOCS,EX,BATCH,MODEL io;
 ```
 
-The three "shapes" to keep straight:
-- **Setup (once):** `train_tokenizer` → `load_tokenizer` → `build_documents` → `Dataset.__init__`. After this, `self.examples` is frozen.
-- **Per item (every fetch):** `create_dataloader` drives `__getitem__` → `mask_tokens` (fresh mask).
-- **Per batch:** `collate_fn` pads a list of those items into the `(B, S)` dict.
+**The same ①–⑦, traced on one tiny 2-article corpus** (ids are illustrative):
 
-`__init__` is the busy one — it's the only place that calls **both** `build_nsp_example`
-(nsp.py) and `_truncate`. Everything below it is just "fetch one, mask it, pad a stack."
+```
+① prepare_corpus()        writes bn_wiki.txt — one article per line:
+                            মধুসূদন দত্ত একজন কবি। তিনি ১৮২৪ সালে জন্মান।
+                            ⟨blank line⟩
+                            কলকাতা একটি শহর। এটি বড়।
+
+② train_tokenizer()       learns the WordPiece vocab → saves vocab.txt
+③ load_tokenizer()        reloads vocab.txt → tokenizer object  ([CLS]=2, [SEP]=3, [MASK]=4)
+
+④ build_documents(bn_wiki.txt, tokenizer)    splits on blank line (docs) + । (sentences), encodes:
+                            all_documents = [ [[88,41,9],[5,33,90]],   # doc0: 2 sentences
+                                              [[21,4],   [11,60]]   ]  # doc1: 2 sentences
+
+   create_dataloader(all_documents, tokenizer)   builds the Dataset (runs ⑤) + a
+                            DataLoader that drives ⑥ then ⑦ — it's the orchestrator, not a step
+
+⑤ Dataset.__init__()      one example per sentence. For doc0, sentence0:
+     ├ build_nsp_example → token_ids = [2, 88,41,9, 3, 5,33,90, 3]   ([CLS]A[SEP]B[SEP])
+     │                     types     = [0,  0, 0,0, 0, 1, 1, 1, 1]   nsp_label = 0 (IsNext)
+     └ _truncate          (already ≤ max_seq_len → unchanged)
+   → self.examples = 4 frozen tuples (ids, types, nsp_label), one per sentence
+
+⑥ __getitem__(0)          masks a CLONE (say position 2, id 41, is picked):
+     └ mask_tokens →  input_ids  = [2, 88, 4, 9, 3, 5,33,90, 3]   (41 → [MASK]=4)
+                      mlm_labels = [-100,-100, 41,-100,...,-100]  (orig id only at masked spot)
+                      nsp_label  = 0
+
+⑦ collate_fn([item0, item1])   pads both to S = max length in the batch → (B, S):
+                      input_ids      (2, S)   pad → 0
+                      token_type_ids (2, S)   pad → 0
+                      attention_mask (2, S)   1 = real, 0 = pad
+                      mlm_labels     (2, S)   pad → -100
+                      nsp_labels     (2,)     [0, 1]
+                      → straight into the model, then loss.py
+```
+
+Reading it as three phases:
+- **① ④ once at setup** — after `Dataset.__init__` (⑤), `self.examples` is **frozen**.
+- **⑥ every fetch** — `create_dataloader` drives `__getitem__`, which re-rolls a fresh mask each time.
+- **⑦ every batch** — `collate_fn` pads a list of items into rectangles.
+
+⑤ is the busy box — the only one that calls **both** `build_nsp_example` (nsp.py) and
+`_truncate`. Everything after it is just "fetch one → mask → pad a stack."
 
 ## Where this sits in the pipeline
 
