@@ -46,6 +46,8 @@
 │   └── train_utils.py               # [adapt] training loop + checkpointing; handle two losses + two-phase
 │       # logging_setup → [import] from ../transformer (see header)
 ├── scripts/
+│   ├── prepare_corpus.py            # [new]   run-once: Bengali Wikipedia → cleaned corpus .txt (one article = one line)
+│   ├── _corpus_filter.py            # [new]   optional per-article keep-hook for prepare_corpus — gitignored, falls back to keep-all
 │   ├── _common.py                   # [adapt] shared model/checkpoint build+load helpers
 │   ├── pretrain.py                  # [adapt] from train.py — PRE-TRAINING entrypoint: MLM + NSP on unlabeled corpus
 │   ├── finetune.py                  # [new]   FINE-TUNING: load pretrained, add task head, train on labels
@@ -78,6 +80,7 @@
     │   ├── optimizer.md              # AdamW + warmup/linear-decay
     │   └── loss.md                   # combined MLM + NSP loss
     └── scripts/
+        ├── prepare_corpus.md         # building the corpus: Wikipedia → cleaned .txt (one article = one line)
         ├── pretrain.md               # the pre-training run
         ├── finetune.md               # the fine-tuning run
         └── inference.md              # fill-mask + embeddings

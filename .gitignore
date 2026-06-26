@@ -58,6 +58,9 @@ logs/
 # Generated preprocessing assets — rebuilt from the dataset on first run.
 tokenizer/
 
+# Private corpus filter — not shipped publicly
+BERT/scripts/_corpus_filter.py
+
 # Markdowns
 # ViT/just_for_knowledge.md
 
