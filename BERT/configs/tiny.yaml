@@ -1,0 +1,68 @@
+# ===========================================================
+# BERT Tiny Configuration — For Debugging & Testing
+# ===========================================================
+#
+# NOT for producing a good model.
+# Use this to verify the pre-training pipeline (corpus → WordPiece →
+# MLM/NSP examples → batches → loss) runs end to end before switching
+# to base.yaml for real training.
+#
+# Tiny model + a few hundred articles — catches bugs fast.
+# ===========================================================
+
+# --- Model Architecture ---
+model:
+  d_model: 64           # Tiny model dimension
+  num_heads: 4          # 64/4 = 16 per head
+  d_ff: 256             # Tiny feed-forward dimension
+  num_layers: 2         # Minimal encoder layers
+  dropout: 0.1          # Paper: 0.1, Section A.2 (same ✓)
+  max_position_embeddings: 128   # Short sequences only
+  num_segments: 2       # Segment embeddings A/B for NSP, Section 3.1
+
+# --- Training ---
+training:
+  max_seq_len: 64       # Short sequences for fast iteration
+  batch_size: 8         # Small batches
+  num_epochs: 3         # Few epochs — just checking if loss goes down
+  mlm_probability: 0.15 # Paper: 0.15, Section 3.1 (same ✓)
+  warmup_steps: 100     # Shorter warmup for fewer steps
+  clip_grad_norm: 1.0   # Max gradient norm — safety net against exploding gradients
+  val_split: 0.1        # Fraction reserved for validation (10%)
+
+# --- Optimizer (AdamW) ---
+optimizer:
+  lr: 1.0e-4            # Paper: 1e-4, A.2
+  betas: [0.9, 0.999]  # Paper: β₁=0.9, β₂=0.999, A.2
+  eps: 1.0e-6          # Paper: 1e-6, A.2
+  weight_decay: 0.01   # Paper: L2 weight decay 0.01, A.2
+
+# --- Data ---
+data:
+  dataset: "wikimedia/wikipedia"   # HuggingFace dataset
+  wiki_dump: "20231101.bn"         # Bengali Wikipedia snapshot
+  corpus_path: "BERT/data/bn_wiki_tiny.txt"   # tiny corpus for pipeline checks
+  max_articles: 500                # only a few hundred articles — enough to verify pipeline
+  min_chars: 200                   # skip stubs shorter than this
+  vocab_size: 4000                 # Small vocab for fast testing
+  num_workers: 0                   # 0 = main process only (safe for macOS/MPS)
+
+# --- Special Tokens (must match SPECIAL_TOKENS order in data_utils.py) ---
+tokens:
+  pad_idx: 0    # [PAD]  — padding
+  unk_idx: 1    # [UNK]  — unknown / out-of-vocab
+  cls_idx: 2    # [CLS]  — sequence start; pooled for NSP
+  sep_idx: 3    # [SEP]  — segment separator / end
+  mask_idx: 4   # [MASK] — masked-token placeholder for MLM
+
+# --- Seed ---
+seed: 42
+
+# --- Device ---
+device: "auto"  # "auto" → MPS/CUDA if available, else CPU. Options: "auto", "mps", "cpu", "cuda"
+
+# --- Paths ---
+paths:
+  tokenizer_dir: "BERT/tokenizer/tiny/"
+  checkpoint_dir: "BERT/checkpoints/tiny/"
+  log_dir: "BERT/logs/tiny/"

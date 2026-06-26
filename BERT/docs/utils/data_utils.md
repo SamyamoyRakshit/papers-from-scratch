@@ -23,6 +23,7 @@ Throughout: **B** = batch size, **S** = sequence length (per batch, after paddin
 
 ## Contents
 
+- [The functions at a glance (call graph)](#the-functions-at-a-glance-call-graph)
 - [Where this sits in the pipeline](#where-this-sits-in-the-pipeline)
 - [The 3-level nest everything revolves around](#the-3-level-nest-everything-revolves-around)
 - [1. The WordPiece tokenizer](#1-the-wordpiece-tokenizer)
@@ -40,6 +41,69 @@ Throughout: **B** = batch size, **S** = sequence length (per batch, after paddin
 - [References](#references)
 
 ---
+
+## The functions at a glance (call graph)
+
+There are a lot of functions here. This is **who calls whom** — solid arrows are
+calls, and each box is colour-grouped by the file it lives in. Read it top→bottom:
+it's the same order you'd run things.
+
+```mermaid
+flowchart TD
+    subgraph prep["prepare_corpus.py (run once, separate)"]
+        PC["prepare_corpus()"]
+    end
+    TXT[/"data/bn_wiki.txt"/]
+    PC --> TXT
+
+    subgraph du["data_utils.py (this file)"]
+        TT["train_tokenizer()"]
+        LT["load_tokenizer()"]
+        BD["build_documents()"]
+        SS["_split_sentences()"]
+        DS["BERTPretrainingDataset.__init__()"]
+        TR["_truncate()"]
+        GI["__getitem__()"]
+        CF["collate_fn()"]
+        CD["create_dataloader()"]
+    end
+
+    subgraph ext["other modules"]
+        NSP["build_nsp_example()<br/>(nsp.py)"]
+        MSK["mask_tokens()<br/>(masking.py)"]
+    end
+
+    TXT --> BD
+    TT -. "saves vocab.txt" .-> LT
+    LT --> DS
+    BD --> SS
+    BD --> DS
+
+    CD --> DS
+    CD --> CF
+    DS --> NSP
+    DS --> TR
+    DS --> GI
+    GI --> MSK
+
+    GI -- "per item" --> CF
+    CF --> BATCH[/"(B, S) batch dict"/]
+
+    classDef this fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;
+    classDef other fill:#fff3e0,stroke:#e65100,color:#bf360c;
+    classDef io fill:#f1f8e9,stroke:#558b2f,color:#33691e;
+    class TT,LT,BD,SS,DS,TR,GI,CF,CD this;
+    class NSP,MSK,PC other;
+    class TXT,BATCH io;
+```
+
+The three "shapes" to keep straight:
+- **Setup (once):** `train_tokenizer` → `load_tokenizer` → `build_documents` → `Dataset.__init__`. After this, `self.examples` is frozen.
+- **Per item (every fetch):** `create_dataloader` drives `__getitem__` → `mask_tokens` (fresh mask).
+- **Per batch:** `collate_fn` pads a list of those items into the `(B, S)` dict.
+
+`__init__` is the busy one — it's the only place that calls **both** `build_nsp_example`
+(nsp.py) and `_truncate`. Everything below it is just "fetch one, mask it, pad a stack."
 
 ## Where this sits in the pipeline
 
