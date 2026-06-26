@@ -48,29 +48,33 @@ There are a lot of functions here. This is **who calls whom** — solid arrows a
 calls, and each box is colour-grouped by the file it lives in. Read it top→bottom:
 it's the same order you'd run things.
 
+Each box shows the **function** and, in grey, **what it outputs for one tiny 2-article
+corpus** (`মধুসূদন দত্ত একজন কবি। তিনি ১৮২৪ সালে জন্মান।` ‖ `কলকাতা একটি শহর। এটি বড়।`)
+so the graph isn't abstract:
+
 ```mermaid
 flowchart TD
     subgraph prep["prepare_corpus.py (run once, separate)"]
-        PC["prepare_corpus()"]
+        PC["prepare_corpus()<br/>one article per line"]
     end
-    TXT[/"data/bn_wiki.txt"/]
+    TXT[/"bn_wiki.txt<br/>2 articles"/]
     PC --> TXT
 
     subgraph du["data_utils.py (this file)"]
-        TT["train_tokenizer()"]
-        LT["load_tokenizer()"]
-        BD["build_documents()"]
-        SS["_split_sentences()"]
-        DS["BERTPretrainingDataset.__init__()"]
-        TR["_truncate()"]
-        GI["__getitem__()"]
-        CF["collate_fn()"]
-        CD["create_dataloader()"]
+        TT["train_tokenizer()<br/>→ vocab.txt"]
+        LT["load_tokenizer()<br/>reload vocab"]
+        BD["build_documents()<br/>→ 2 docs"]
+        SS["_split_sentences()<br/>। → sentences"]
+        DS["Dataset.__init__()<br/>→ 4 frozen examples"]
+        TR["_truncate()<br/>≤ max_seq_len"]
+        GI["__getitem__(0)<br/>→ masked input_ids"]
+        CF["collate_fn()<br/>pad → (B,S)"]
+        CD["create_dataloader()<br/>shuffle + batch"]
     end
 
     subgraph ext["other modules"]
-        NSP["build_nsp_example()<br/>(nsp.py)"]
-        MSK["mask_tokens()<br/>(masking.py)"]
+        NSP["build_nsp_example()<br/>nsp.py · nsp=0"]
+        MSK["mask_tokens()<br/>masking.py · 41→[MASK]"]
     end
 
     TXT --> BD
@@ -87,7 +91,7 @@ flowchart TD
     GI --> MSK
 
     GI -- "per item" --> CF
-    CF --> BATCH[/"(B, S) batch dict"/]
+    CF --> BATCH[/"(B, S) batch dict<br/>input_ids,token_type_ids,<br/>attention_mask,mlm_labels (B,S)<br/>nsp_labels (B,)"/]
 
     classDef this fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;
     classDef other fill:#fff3e0,stroke:#e65100,color:#bf360c;
