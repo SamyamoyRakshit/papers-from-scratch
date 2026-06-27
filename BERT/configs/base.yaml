@@ -58,7 +58,7 @@ data:
   corpus_path: "BERT/data/bn_wiki.txt"   # prepare_corpus.py writes here; build_documents reads it
   max_articles: 20000              # null = use the full dump
   min_chars: 200                   # skip stubs shorter than this
-  vocab_size: 30000                # Paper: 30000 WordPiece, Section 3 (reduce if corpus is small)
+  vocab_size: 10000                # Paper: 30000 WordPiece, Section 3 — dropped for our smaller corpus so rare-token rows actually train
   num_workers: 0                   # 0 = main process only (safe for macOS/MPS)
 
 # --- Special Tokens (must match SPECIAL_TOKENS order in data_utils.py) ---

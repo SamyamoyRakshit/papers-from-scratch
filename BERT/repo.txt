@@ -10,6 +10,7 @@
 # `transformer` resolves as a package; both modules import only torch, no relative deps):
 #   transformer/models/modules/multi_head_attention.py  → MultiHeadAttention
 #   transformer/models/modules/layer_norm.py            → LayerNorm
+#   transformer/utils/mask_utils.py                     → create_padding_mask (encoder needs only the pad mask)
 #   transformer/utils/logging_setup.py                  → logging config
 #
 ├── ARTICLE.md                       # Long-form write-up of the build (the article)
@@ -37,7 +38,6 @@
 ├── utils/
 │   ├── __init__.py
 │   ├── config.py                    # [adapt] pydantic YAML config; add mlm_probability, num_segments, task fields
-│   ├── mask_utils.py                # [tweak] keep create_padding_mask / create_src_mask; DROP causal/tgt/memory masks
 │   ├── masking.py                   # [new]   MLM masking: 15% of tokens → 80% [MASK] / 10% random / 10% keep
 │   ├── nsp.py                       # [new]   NSP pair builder: 50% true next-sentence, 50% random sentence B
 │   ├── loss.py                      # [adapt] reuse F.cross_entropy approach; MLM CE (masked only) + NSP CE

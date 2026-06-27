@@ -13,9 +13,11 @@ except ImportError:
 
 def prepare_corpus(config):
     data = config.data
-    ds = load_dataset(path=data.dataset, name=data.wiki_dump, split="train")
+    # streaming=True: pull rows over HTTP on demand instead of rebuilding the whole
+    # ~143k-article dump to local Arrow first (multi-GB; we only want a slice of it).
+    ds = load_dataset(path=data.dataset, name=data.wiki_dump, split="train", streaming=True)
     if data.max_articles:
-        ds = ds.select(range(data.max_articles))
+        ds = ds.take(data.max_articles)              # IterableDataset → .take, not .select
 
     kept = dropped_short = dropped_filter = 0
     with open(data.corpus_path, "w", encoding="utf-8") as f:

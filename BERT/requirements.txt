@@ -1,0 +1,17 @@
+# BERT pre-training — pip fallback. Source of truth is pyproject.toml at the repo
+# root (`uv sync`); versions below mirror it. BERT also reuses transformer/ modules
+# (MultiHeadAttention, LayerNorm, mask/logging) — pure torch, no extra deps.
+
+# --- Core: corpus → WordPiece → MLM/NSP examples → model ---
+torch>=2.12
+tokenizers>=0.23.1        # WordPiece (BertWordPieceTokenizer) — data_utils.py
+datasets>=2.14.0          # streaming Bengali Wikipedia — prepare_corpus.py
+pydantic==2.12.4          # typed YAML config — utils/config.py
+pyyaml>=6.0               # YAML loading — utils/config.py
+
+# --- Training / logging (pretrain.py) ---
+tensorboard>=2.20.0       # loss curves → logs/
+tqdm==4.67.1              # progress bars
+
+# --- Optional local demo (scripts/app.py) ---
+# gradio>=6.15.2          # fill-mask / classification UI
