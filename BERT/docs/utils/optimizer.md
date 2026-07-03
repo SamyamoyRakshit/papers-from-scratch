@@ -144,7 +144,7 @@ lr
      |      /                              \
    0 |___/___________________________________\____  step
      0                       10k            15k
-        ────────── warmup ──────────  ─ decay ─
+        ────────── warmup ─────  ── decay ────
 ```
 
 The apex lands at `10k` — **two-thirds** across, because warmup (10k) is longer than decay

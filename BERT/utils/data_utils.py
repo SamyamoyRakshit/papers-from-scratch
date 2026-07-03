@@ -213,19 +213,19 @@ def collate_fn(batch, pad_id: int, ignore_index: int = -100):
       input_ids      → pad_id        (a real token slot the model must ignore)
       token_type_ids → 0             (padding sits in segment 0, harmless)
       mlm_labels     → ignore_index  (-100 → cross_entropy skips it, like masking.py)
-    attention_mask is derived: 1 on real tokens, 0 on padding.
+
+    No attention_mask is emitted: the model derives its own pad mask from
+    input_ids internally (bert.py: create_padding_mask), so the batch doesn't
+    carry one.
     """
     input_ids = pad_sequence([b["input_ids"] for b in batch], batch_first=True, padding_value=pad_id)
     token_type_ids = pad_sequence([b["token_type_ids"] for b in batch], batch_first=True, padding_value=0)
     mlm_labels = pad_sequence([b["mlm_labels"] for b in batch], batch_first=True, padding_value=ignore_index)
     nsp_labels = torch.stack([b["nsp_label"] for b in batch])
 
-    attention_mask = (input_ids != pad_id).long()
-
     return {
         "input_ids": input_ids,            # (B, S)
         "token_type_ids": token_type_ids,  # (B, S)
-        "attention_mask": attention_mask,  # (B, S) — 1 keep, 0 pad
         "mlm_labels": mlm_labels,          # (B, S) → loss.py
         "nsp_labels": nsp_labels          # (B,)   → loss.py
     }

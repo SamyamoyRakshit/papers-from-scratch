@@ -125,7 +125,6 @@ flowchart TD
 ⑦ collate_fn([item0, item1])   pads both to S = max length in the batch → (B, S):
                       input_ids      (2, S)   pad → 0
                       token_type_ids (2, S)   pad → 0
-                      attention_mask (2, S)   1 = real, 0 = pad
                       mlm_labels     (2, S)   pad → -100
                       nsp_labels     (2,)     [0, 1]
                       → straight into the model, then loss.py
@@ -439,8 +438,11 @@ input_ids      = pad_sequence(..., batch_first=True, padding_value=pad_id)      
 token_type_ids = pad_sequence(..., batch_first=True, padding_value=0)            # padding sits in segment 0
 mlm_labels     = pad_sequence(..., batch_first=True, padding_value=ignore_index) # -100 → loss skips it
 nsp_labels     = torch.stack([b["nsp_label"] for b in batch])                    # scalars → (B,)
-attention_mask = (input_ids != pad_id).long()                                    # 1 = real, 0 = pad
 ```
+
+No `attention_mask` is emitted. The model rebuilds the pad mask from `input_ids`
+itself (`bert.py: create_padding_mask`, shape `(B, 1, 1, S)` for attention), so the
+batch doesn't carry a redundant `(B, S)` copy.
 
 **Example** — two examples, lengths 8 and 6, `pad_id=0`:
 
@@ -462,12 +464,9 @@ pad every field to S = 8 (the longest in the batch):
   mlm_labels      A: [-100, -100,    41, -100, -100, -100, -100, -100]
                   B: [-100, -100,    19, -100, -100, -100, -100, -100]   ← pad → -100
 
-  attention_mask  A: [   1,     1,     1,    1,    1,    1,    1,    1]
-                  B: [   1,     1,     1,    1,    1,    1,    0,    0]   ← 0 exactly at padding
-
   nsp_labels       : [   0,     1]                                       ← one scalar per example
 
-shapes:  input_ids / token_type_ids / mlm_labels / attention_mask = (2, 8)
+shapes:  input_ids / token_type_ids / mlm_labels = (2, 8)
          nsp_labels = (2,)
 ```
 
@@ -477,10 +476,10 @@ Two details:
   downstream piece assumes batch on axis 0 (loss.py reads `(B, S, V)`; the model takes
   `[CLS]` as `hidden[:, 0]`). `False` would give `(S, B)` and force transposes.
 - **Why padding's segment id is harmless.** A pad slot gets `token_type_id = 0`
-  (segment A's embedding), but its hidden state is never used: `attention_mask = 0`
-  there (nobody attends to it), `mlm_labels = -100` there (loss ignores it), and NSP
-  reads only `[CLS]`. The thing that actually neutralizes padding is the
-  **`attention_mask`**, not the segment id.
+  (segment A's embedding), but its hidden state is never used: the model's pad mask
+  (built from `input_ids` in `bert.py`) is `0` there so nobody attends to it,
+  `mlm_labels = -100` there (loss ignores it), and NSP reads only `[CLS]`. The thing
+  that actually neutralizes padding is that **pad mask**, not the segment id.
 
 ---
 
@@ -549,8 +548,8 @@ self.examples.append((token_ids, token_type_ids, 0))
 ```
 
 **④ `collate_fn`** over a batch of these → padded `(B, S)` dict with `input_ids`,
-`token_type_ids`, `attention_mask`, `mlm_labels`, `nsp_labels` → straight into the
-model, then [`loss.py`](loss.md).
+`token_type_ids`, `mlm_labels`, `nsp_labels` → straight into the model, then
+[`loss.py`](loss.md).
 
 ---
 
