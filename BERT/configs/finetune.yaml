@@ -1,0 +1,53 @@
+# ===========================================================
+# BERT Fine-tuning — Single-sentence classification (Devlin et al., 2019, §4.1)
+# ===========================================================
+# Loads a pre-trained encoder (a pretrain run's best.pt), discards the MLM/NSP
+# heads, attaches a fresh classification head, and fine-tunes end-to-end
+# (full fine-tuning, §3.5).
+#
+# TASK: ai4bharat/indic_glue "sna.bn" — Soham Bengali news-article topic classification.
+# ===========================================================
+
+# --- Pre-trained checkpoint to start from ---
+pretrained:
+  # Point at the actual run dir (NOT checkpoints/base/best.pt — its config.yaml
+  # sibling lives inside the run_<ts>/ dir). Replace the timestamp with yours.
+  checkpoint: "BERT/checkpoints/base/run_2026-06-30_23-05-21/best.pt"
+  config:     "BERT/checkpoints/base/run_2026-06-30_23-05-21/config.yaml"
+
+# --- Downstream dataset (config-driven — no ids hardcoded in code) ---
+data:
+  dataset_id: "ai4bharat/indic_glue"
+  subset: "sna.bn"
+  text_field: "text"
+  label_field: "label"
+  num_labels: null        # null → inferred from the train split
+
+# --- Fine-tuning schedule (§A.3 — BERT fine-tunes 2–4 epochs, small lr) ---
+training:
+  max_seq_len: 128        # ≤ pre-trained max_position_embeddings
+  batch_size: 32          # Paper: 16 or 32, §A.3
+  num_epochs: 3           # Paper: 2–4, §A.3
+  warmup_ratio: 0.1       # first 10% of steps = linear lr warmup, then decay to 0.
+                          # The 10% is NOT in the paper text — it's from Google's released
+                          # fine-tuning code (run_classifier.py: warmup_proportion=0.1). We use
+                          # a ratio, not §A.2's fixed 10,000 steps, because fine-tuning runs are
+                          # short — 10k steps would outlast the whole run so lr never peaks.
+  clip_grad_norm: 1.0
+
+# --- Optimizer (§A.3 — same AdamW, smaller peak lr than pre-training) ---
+optimizer:
+  lr: 5.0e-5 #3.0e-5  #2.0e-5              # Paper: 5e-5 / 3e-5 / 2e-5, §A.3 (vs 1e-4 pre-training)
+  betas: [0.9, 0.999]
+  eps: 1.0e-6
+  weight_decay: 0.01
+
+# --- Seed / device ---
+seed: 42
+device: "auto"
+
+# --- Paths ---
+paths:
+  tokenizer_dir: "BERT/tokenizer/base/"             # SAME tokenizer the encoder was pre-trained with
+  checkpoint_dir: "BERT/checkpoints/finetune/sna_bn/"
+  log_dir: "BERT/logs/finetune/sna_bn/"

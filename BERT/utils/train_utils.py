@@ -13,6 +13,9 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)
 
 
+# NOTE: canonical copy is common.run_utils.update_leaderboard (finetune uses it).
+# Kept local here to avoid churning already-shipped pre-training code — if you fix
+# a bug in one, fix the other. Migrate this call when pretrain.py is next touched.
 def _update_leaderboard(parent_dir: str, run_name: str, val_loss: float) -> None:
     """
     Record this run's best val_loss in {parent_dir}/leaderboard.json and repoint

@@ -6,6 +6,7 @@ checkpoint provenance, git-hash capture, logging setup. BERT imports these; the
 transformer keeps its own copies (already shipped — left untouched on purpose).
 """
 import hashlib
+import json
 import logging
 import os
 import subprocess
@@ -64,6 +65,40 @@ def setup_logging(log_dir: str) -> None:
             logging.StreamHandler(),
         ],
     )
+
+
+def update_leaderboard(parent_dir: str, run_name: str, score: float,
+                       higher_is_better: bool = False) -> None:
+    """
+    Record this run's best score in {parent_dir}/leaderboard.json and repoint the
+    {parent_dir}/best.pt symlink at the global best across all runs.
+
+    parent_dir holds run_<timestamp>/ subdirs; run_name is the basename of the
+    current run dir. Symlink target is relative ("run_X/best.pt") so the parent
+    dir stays portable if moved.
+
+    higher_is_better picks the sort direction — the only thing that differs
+    between metrics: pre-training ranks val_loss ascending (default, lower wins),
+    fine-tuning ranks val_acc descending (higher wins).
+    """
+    leaderboard_path = os.path.join(parent_dir, "leaderboard.json")
+    board: dict[str, float] = {}
+    if os.path.exists(leaderboard_path):
+        with open(leaderboard_path) as f:
+            board = json.load(f)
+
+    board[run_name] = score
+    # Sort so the file reads top-down as a ranking (best run first).
+    board = dict(sorted(board.items(), key=lambda kv: kv[1], reverse=higher_is_better))
+    with open(leaderboard_path, "w") as f:
+        json.dump(board, f, indent=2)
+
+    best_run = next(iter(board))
+    symlink = os.path.join(parent_dir, "best.pt")
+    target = os.path.join(best_run, "best.pt")  # relative -> portable across moves
+    if os.path.islink(symlink) or os.path.exists(symlink):
+        os.unlink(symlink)
+    os.symlink(target, symlink)
 
 
 def warn_if_config_diverges(snapshot: dict, current: dict, safe_keys: set[str]) -> None:

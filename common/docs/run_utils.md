@@ -4,9 +4,9 @@
 > Consumers: **any replication in this repo** — currently [`BERT/scripts/pretrain.py`](../../BERT/scripts/pretrain.py) (+ future finetune / evaluate / inference), and any architecture added later (GPT next, then others).
 
 A tiny, **paper-agnostic** toolbox: device resolution, checkpoint provenance (git hash + file
-hashing), logging setup, and a config-divergence check. Nothing here knows about BERT, transformers,
-attention, or losses — it's pure plumbing that *any* training script needs, for *any* model. New
-replications import it instead of re-implementing it.
+hashing), logging setup, a leaderboard/`best.pt` ranking, and a config-divergence check. Nothing
+here knows about BERT, transformers, attention, or losses — it's pure plumbing that *any* training
+script needs, for *any* model. New replications import it instead of re-implementing it.
 
 ## Why a top-level `common/`?
 
@@ -17,10 +17,10 @@ in `common/`. BERT imports them; the transformer is **left untouched** (already 
 
 ```mermaid
 flowchart TD
-    RU["common/run_utils.py<br/>get_device · get_git_hash<br/>sha256_file · setup_logging<br/>warn_if_config_diverges"]
+    RU["common/run_utils.py<br/>get_device · get_git_hash<br/>sha256_file · setup_logging<br/>update_leaderboard · warn_if_config_diverges"]
 
     PT["BERT/scripts/pretrain.py"] --> RU
-    FT["BERT/scripts/finetune.py<br/>(future)"] -.-> RU
+    FT["BERT/scripts/finetune.py<br/>+ finetune_utils.py"] --> RU
     EV["BERT/scripts/evaluate.py<br/>(future)"] -.-> RU
     FA["GPT/scripts/*<br/>(next replication — then others)"] -.-> RU
 
@@ -47,6 +47,7 @@ What stays **out** of `common/`: anything coupled to a specific replication — 
 - [`get_git_hash`](#get_git_hash)
 - [`sha256_file`](#sha256_file)
 - [`setup_logging`](#setup_logging)
+- [`update_leaderboard`](#update_leaderboard)
 - [`warn_if_config_diverges`](#warn_if_config_diverges)
 - [References](#references)
 
@@ -155,6 +156,51 @@ one self-contained folder per run. (BERT does this at the top of `pretrain.py`.)
 
 ---
 
+## `update_leaderboard`
+
+Records a run's best score in `{parent_dir}/leaderboard.json` and repoints `{parent_dir}/best.pt`
+at the global best across **all** runs — so the best checkpoint is always one fixed path away, no
+matter how many runs pile up:
+
+```python
+def update_leaderboard(parent_dir, run_name, score, higher_is_better=False):
+    board = json.load(open(leaderboard_path)) if exists else {}
+    board[run_name] = score
+    board = dict(sorted(board.items(), key=lambda kv: kv[1], reverse=higher_is_better))  # rank
+    json.dump(board, ...)
+    best_run = next(iter(board))                       # top of the ranking
+    os.symlink(f"{best_run}/best.pt", f"{parent_dir}/best.pt")   # relative → portable
+```
+
+The **only** knob that differs between metrics is `higher_is_better` — the sort direction:
+
+| caller | metric | `higher_is_better` | ranking |
+|---|---|---|---|
+| pre-training ([`train_utils.py`](../../BERT/utils/train_utils.py)) | `val_loss` | `False` (default) | ascending — lower wins |
+| fine-tuning ([`finetune_utils.py`](../../BERT/utils/finetune_utils.py)) | `val_acc` | `True` | descending — higher wins |
+
+**Worked example** — the fine-tune lr sweep, after three runs (`higher_is_better=True`):
+
+```
+leaderboard.json                                   best.pt symlink
+{                                                  best.pt → run_2026-07-11_23-46-39/best.pt
+  "run_2026-07-11_23-46-39": 0.8533,   ← 5e-5, top      (auto-repointed to the winner each time
+  "run_2026-07-11_23-25-17": 0.8221,   ← 3e-5            a new run beats the current best)
+  "run_2026-07-11_21-42-45": 0.7952    ← 2e-5
+}
+```
+
+The **relative** symlink target (`run_X/best.pt`, not an absolute path) keeps the parent dir
+portable — move or rename it and the link still resolves.
+
+> **Why this is in `common/`.** Writing a JSON ranking and repointing a symlink is generic — it
+> knows nothing about BERT, losses, or attention. Pre-training and fine-tuning both need it, so it
+> lives here **once** with a `higher_is_better` flag rather than being copied per-metric. (One
+> historical copy still lives inline in `train_utils.py` with a drift-note pointing here — kept to
+> avoid churning already-shipped pre-training code; new callers use this one.)
+
+---
+
 ## `warn_if_config_diverges`
 
 On `--resume`, warns if the current config drifted from the one that produced the checkpoint. It's a
@@ -212,6 +258,6 @@ function can live in `common/` while `_RESUME_SAFE_KEYS` can't.
 
 ## References
 
-- Consumer doc: [`BERT/docs/scripts/pretrain.md`](../../BERT/docs/scripts/pretrain.md) (provenance & resume preflight)
-- Source: [`common/run_utils.py`](../run_utils.py) · [`BERT/scripts/pretrain.py`](../../BERT/scripts/pretrain.py) · [`BERT/scripts/_common.py`](../../BERT/scripts/_common.py)
+- Consumer docs: [`BERT/docs/scripts/pretrain.md`](../../BERT/docs/scripts/pretrain.md) (provenance & resume preflight) · [`BERT/docs/scripts/finetune.md`](../../BERT/docs/scripts/finetune.md) & [`finetune_utils.md`](../../BERT/docs/utils/finetune_utils.md) (`update_leaderboard`, `higher_is_better=True`)
+- Source: [`common/run_utils.py`](../run_utils.py) · [`BERT/scripts/pretrain.py`](../../BERT/scripts/pretrain.py) · [`BERT/scripts/_common.py`](../../BERT/scripts/_common.py) · [`BERT/utils/finetune_utils.py`](../../BERT/utils/finetune_utils.py)
 - Mirror reference (own copies): [`transformer/scripts/train.py`](../../transformer/scripts/train.py)
