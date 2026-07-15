@@ -251,7 +251,8 @@ def _collate(batch, pad_id):
 
 ## 3. `create_finetune_dataloaders` — the orchestrator
 
-Downloads the dataset, wraps each split, and returns the two loaders + `num_labels`.
+Downloads the dataset, wraps each split, and returns the two loaders + `num_labels` +
+per-class train counts.
 
 ```python
 d = config.data
@@ -262,6 +263,7 @@ val_key = "validation" if "validation" in dataset else "test"   # sna.bn → "va
 val_split = dataset[val_key]
 
 num_labels = d.num_labels or len(set(train_split[d.label_field]))   # null in yaml → infer → 6
+label_counts = torch.bincount(torch.tensor(train_split[d.label_field]), minlength=num_labels)
 
 collate = partial(_collate, pad_id=tokenizer.token_to_id("[PAD]"))   # freeze pad_id (see Gotchas)
 train_ds = ClassificationDataset(train_split, tokenizer, d.text_field, d.label_field, max_seq_len)
@@ -269,8 +271,22 @@ val_ds   = ClassificationDataset(val_split,   tokenizer, d.text_field, d.label_f
 
 train_loader = DataLoader(train_ds, batch_size=..., shuffle=True,  collate_fn=collate)
 val_loader   = DataLoader(val_ds,   batch_size=..., shuffle=False, collate_fn=collate)
-return train_loader, val_loader, num_labels
+return train_loader, val_loader, num_labels, label_counts
 ```
+
+> **`label_counts`** tallies the train labels — `bincount` walks the 11,284 ints and keeps
+> `num_labels` running tallies, `label_counts[c]` = how many times label `c` appeared:
+>
+> ```python
+> train_split["label"]   # [0, 3, 0, 5, 1, 0, 2, 0, ...]   ← 11,284 ints
+> torch.bincount(...)    # tensor([4603, 2245, 1435, 1289, 1186, 526])
+> #                        kolkata state  natl  sports  ent   intl
+> ```
+>
+> Only `finetune.py` consumes it, and only when `training.class_weighting: true`
+> (see [finetune.md](../scripts/finetune.md#the-loss--optional-class-weighting)); `minlength`
+> keeps all `num_labels` slots even if a class is absent from train (bincount's output would
+> otherwise stop at the highest label seen, misaligning the weight math).
 
 Three config-driven decisions:
 

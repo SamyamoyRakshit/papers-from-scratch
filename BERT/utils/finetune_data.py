@@ -94,6 +94,9 @@ def create_finetune_dataloaders(config, tokenizer):
         train_loader: DataLoader over the train split, shuffled.
         val_loader:   DataLoader over the val split, not shuffled.
         num_labels:   number of classes for the classification head.
+        label_counts: (num_labels,) LongTensor of per-class TRAIN counts — feeds
+                      the class-weighted loss in finetune.py when
+                      training.class_weighting is on; ignored otherwise.
 
     Notes:
         - val split: uses "validation" if the dataset ships one, else falls back to
@@ -119,6 +122,10 @@ def create_finetune_dataloaders(config, tokenizer):
     val_split = dataset[val_key]
 
     num_labels = d.num_labels or len(set(train_split[d.label_field]))
+    # Per-class TRAIN counts (label_counts[c] = # train rows with label c). Only consumed
+    # by finetune.py when training.class_weighting is on; minlength pads classes that
+    # happen to be absent from train to count 0 instead of shrinking the tensor.
+    label_counts = torch.bincount(torch.tensor(train_split[d.label_field]), minlength=num_labels)
     logger.info(f"Dataset {d.dataset_id}/{d.subset}: "
                 f"{len(train_split)} train, {len(val_split)} {val_key}, {num_labels} labels")
 
@@ -129,7 +136,8 @@ def create_finetune_dataloaders(config, tokenizer):
 
     train_loader = DataLoader(train_ds, batch_size=config.training.batch_size, shuffle=True, collate_fn=collate)
     val_loader = DataLoader(val_ds, batch_size=config.training.batch_size, shuffle=False, collate_fn=collate)
-    return train_loader, val_loader, num_labels
+    # return train_loader, val_loader, num_labels   # v1 — before class_weighting
+    return train_loader, val_loader, num_labels, label_counts
 
 
 def create_test_dataloader(config, tokenizer):

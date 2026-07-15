@@ -34,6 +34,9 @@ class FinetuneTrainingConfig(_Strict):
     num_epochs: int
     warmup_ratio: float
     clip_grad_norm: float
+    # Default False so old run snapshots (config.yaml without this key) still parse
+    # when evaluate.py / inference.py reload them.
+    class_weighting: bool = False
 
     @model_validator(mode="after")
     def _check(self):

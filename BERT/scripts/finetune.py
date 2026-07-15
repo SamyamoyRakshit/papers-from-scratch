@@ -104,7 +104,8 @@ def main():
 
         # --- Data (num_labels emerges from the dataset) ---
         logger.info("Loading dataset...")
-        train_loader, val_loader, num_labels = create_finetune_dataloaders(config, tokenizer)
+        # train_loader, val_loader, num_labels = create_finetune_dataloaders(config, tokenizer)   # v1
+        train_loader, val_loader, num_labels, label_counts = create_finetune_dataloaders(config, tokenizer)
         logger.info(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
 
         # --- Model: encoder dims from the snapshot + a fresh num_labels head ---
@@ -136,7 +137,15 @@ def main():
         logger.info(f"Model parameters: {total_params:,} total ({num_labels}-way head)")
 
         # --- Loss / optimizer (warmup as a fraction of total steps) ---
-        criterion = nn.CrossEntropyLoss()
+        # criterion = nn.CrossEntropyLoss()   # v1 — plain CE, every example equal
+        # class_weighting on → sklearn's "balanced" recipe N/(K·n_c): a mistake on a
+        # rare class costs proportionally more (small-class recall over big-class
+        # accuracy). Off → weight=None, which IS plain CE, same as v1 above.
+        class_weights = None
+        if config.training.class_weighting:
+            class_weights = (label_counts.sum() / (num_labels * label_counts.float())).to(device)
+            logger.info("Class weights: " + ", ".join(f"{w:.2f}" for w in class_weights.tolist()))
+        criterion = nn.CrossEntropyLoss(weight=class_weights)
         total_steps = len(train_loader) * config.training.num_epochs
         warmup_steps = int(config.training.warmup_ratio * total_steps)
         optimizer, scheduler = build_optimizer(

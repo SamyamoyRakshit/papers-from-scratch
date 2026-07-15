@@ -28,6 +28,7 @@ Throughout: **B** = batch size (32), **S** = sequence length, **step** = one bat
 - [The fine-tune architecture](#the-fine-tune-architecture)
 - [The transplant](#the-transplant)
 - [`total_steps` & warmup](#total_steps--warmup)
+- [The loss — optional class weighting](#the-loss--optional-class-weighting)
 - [Per-run directories](#per-run-directories)
 - [The lr sweep](#the-lr-sweep)
 - [TensorBoard — the sweep visualized](#tensorboard--the-sweep-visualized)
@@ -57,7 +58,7 @@ flowchart TD
     LC --> PREFLIGHT{"tokenizer_sha256<br/>matches checkpoint?"}
     PREFLIGHT -- no --> E2["RuntimeError<br/>(wrong vocab)"]
 
-    LOAD --> DATA["create_finetune_dataloaders()<br/>→ train_loader, val_loader, num_labels"]
+    LOAD --> DATA["create_finetune_dataloaders()<br/>→ train_loader, val_loader,<br/>num_labels, label_counts"]
 
     PCFG --> BUILD["BERTForSequenceClassification(...)<br/>encoder dims from snapshot + num_labels head"]
     DATA --> BUILD
@@ -67,7 +68,7 @@ flowchart TD
     DATA --> STEPS["total_steps = len(train_loader) × num_epochs"]
     STEPS --> OPT["build_optimizer()<br/>AdamW + warmup→decay"]
     TRANS --> OPT
-    OPT --> CRIT["criterion = CrossEntropyLoss()"]
+    OPT --> CRIT["criterion = CrossEntropyLoss(weight=class_weights)<br/>None (= plain CE) unless class_weighting: true"]
     CRIT --> TRAIN["train()  (finetune_utils.py)"]
 
     subgraph LOOP["train() — for each epoch"]
@@ -276,6 +277,58 @@ best — no manual bookkeeping. 5e-5 is the model to carry into `evaluate.py`.
 > warmup→decay triangle. With 1,059 total steps and 105 warmup, end of epoch 1 (step 353) sits at
 > `peak × (1059−353)/(1059−105) = peak × 0.74`. So a logged `3.70e-5` ⟹ peak `5.0e-5`; `2.22e-5` ⟹
 > `3.0e-5`; `1.48e-5` ⟹ `2.0e-5`. (Handy when a run's config isn't in front of you.)
+
+## The loss — optional class weighting
+
+`criterion` defaults to plain `CrossEntropyLoss()` — the paper-faithful choice (Google's
+`run_classifier.py` and HuggingFace's `BertForSequenceClassification` both use unweighted CE).
+One yaml flag switches it to the "balanced" weighted variant:
+
+```yaml
+training:
+  class_weighting: false   # true → CrossEntropyLoss(weight = N/(K·n_c)) from TRAIN counts
+```
+
+When it's on, `finetune.py` turns the `label_counts` that `create_finetune_dataloaders` returns
+(`torch.bincount` over the train labels) into one weight per class:
+
+```python
+class_weights = label_counts.sum() / (num_labels * label_counts.float())   # = (N/K) / n_c
+criterion = nn.CrossEntropyLoss(weight=class_weights)
+```
+
+(`.float()` because integer division would truncate the weights; `.to(device)` because the weight
+tensor must sit on mps next to the logits.)
+
+The formula is **fair share ÷ actual count**: `N/K = 11284/6 ≈ 1881` is the count every class
+*would* have if the dataset were balanced, so the weight measures each class's deviation from that:
+
+| class | train count `n_c` | weight `(N/K)/n_c` | |
+|---|---|---|---|
+| kolkata | 4603 | 0.41 | 2.4× its fair share → damped |
+| state | 2245 | 0.84 | |
+| national | 1435 | 1.31 | |
+| sports | 1289 | 1.46 | |
+| entertainment | 1186 | 1.59 | |
+| **international** | **526** | **3.58** | 0.28× its fair share → boosted |
+
+A hypothetical perfectly balanced class (`n_c = 1881`) would get weight `1881/1881 = 1.00` —
+untouched. Above 1 means rarer than fair share, below 1 means more common.
+
+CE multiplies each example's loss by its **true class's** weight, so over an epoch every class
+pulls on the gradients with the same total mass: `n_c × w_c = N/K` — equal for all six. One
+`international` mistake now costs 3.58/0.41 ≈ **9×** a `kolkata` one.
+
+**We ran it once** (`run_2026-07-15_21-12-55`, flag on, everything else identical): best val acc
+**0.8242** vs the unweighted winner's **0.8533**. The run is archived in `leaderboard.json` and the
+`best.pt` symlink never moved — weighting bought minority-class recall and macro-F1 at the expense
+of the headline accuracy, which is exactly the axis `sna.bn` is scored on. Full test-set analysis
+(per-class deltas, both confusion matrices) in
+[`evaluate.md`](evaluate.md#improving-the-minority-class--the-class-weighting-experiment).
+
+The flag ships **off**, and the off path was verified byte-identical to the pre-flag code: a
+`class_weighting: false` rerun with seed 42 reproduced the winner's val trajectory exactly
+(0.8533).
 
 ## TensorBoard — the sweep visualized
 

@@ -34,6 +34,9 @@ training:
                           # a ratio, not §A.2's fixed 10,000 steps, because fine-tuning runs are
                           # short — 10k steps would outlast the whole run so lr never peaks.
   clip_grad_norm: 1.0
+  class_weighting: false  # true → CrossEntropyLoss(weight=N/(K·n_c)) from TRAIN counts:
+                          # rare-class mistakes cost more (trades big-class accuracy for
+                          # small-class recall). false → plain CE, as Devlin's run_classifier.py.
 
 # --- Optimizer (§A.3 — same AdamW, smaller peak lr than pre-training) ---
 optimizer:

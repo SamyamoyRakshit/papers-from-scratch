@@ -35,7 +35,7 @@ Throughout: **B** = batch size (32), **K** = `num_labels` (6 for `sna.bn`), **st
   - [Is it overfitted? No.](#is-it-overfitted-no)
   - [Reading the confusion matrix — the `international` weakness](#reading-the-confusion-matrix--the-international-weakness)
 - [How 86.5% compares — the IndicGLUE `sna.bn` numbers](#how-865-compares--the-indicglue-snabn-numbers)
-- [Improving the minority class (optional)](#improving-the-minority-class-optional)
+- [Improving the minority class — the class-weighting experiment](#improving-the-minority-class--the-class-weighting-experiment)
 - [Running it](#running-it)
 - [References](#references)
 
@@ -373,11 +373,10 @@ well outside noise.
 > (7 classes auto-labeled from article URLs) that isn't even published as a Bengali config on HF.
 > **87.60 is the real published ceiling for `sna.bn`.**
 
-## Improving the minority class (optional)
+## Improving the minority class — the class-weighting experiment
 
-If you *did* want to lift `international` (at a likely small cost to overall accuracy — the two trade
-off), the lever is the class imbalance, not regularization. The train distribution and inverse-freq
-("balanced") weights:
+If you want to lift `international`, the lever is the class imbalance, not regularization. The
+train distribution and inverse-freq ("balanced") weights:
 
 | class | train count | weight `total/(K·count)` |
 |---|---|---|
@@ -388,15 +387,64 @@ off), the lever is the class imbalance, not regularization. The train distributi
 | entertainment | 1186 | 1.586 |
 | **international** | **526** | **3.575** ← biggest |
 
-The cheapest change is **class weighting** — build `CrossEntropyLoss(weight=class_weights)` in
-`finetune.py` so each `international` mistake costs ~8.7× a `kolkata` one, then re-finetune and
-re-evaluate. (Alternative: a `WeightedRandomSampler` to oversample the minority.) **Caveat:** the
-reported metric is accuracy, and up-weighting the rare class pushes its recall up *at accuracy's
-expense* — it improves macro-F1, not the headline. It would also be a **deviation from the paper**:
-neither Google's reference `run_classifier.py` (plain mean of per-example CE) nor HuggingFace's
-`BertForSequenceClassification` (`CrossEntropyLoss()` with no `weight=`) weights the loss. For a
-from-scratch replication citing accuracy, plain `CrossEntropyLoss` is the honest baseline; this is
-a tuning knob, not a fix.
+The cheapest change is **class weighting** — `CrossEntropyLoss(weight=class_weights)`, so each
+`international` mistake costs ~8.7× a `kolkata` one. This is now a config flag
+(`training.class_weighting: true` — see
+[`finetune.md`](finetune.md#the-loss--optional-class-weighting) for the mechanics), and **we ran
+the experiment** (`run_2026-07-15_21-12-55`, everything else identical to the winner). Val acc
+came out **0.8242** (vs 0.8533 unweighted — `best.pt` never moved), and on the held-out test split:
+
+```
+class            prec recall     f1  support
+kolkata         0.988  0.882  0.932      569
+state           0.772  0.860  0.814      279
+national        0.708  0.680  0.694      175
+sports          0.942  0.932  0.937      192
+entertainment   0.836  0.862  0.848      130
+international   0.490  0.742  0.590       66
+---------------------------------------------
+accuracy                      0.851     1411
+macro avg       0.789  0.826  0.803     1411
+weighted avg    0.867  0.851  0.856     1411
+```
+
+Side by side with the unweighted winner, the trade is textbook:
+
+| | unweighted (`best.pt`) | weighted | change |
+|---|---|---|---|
+| **accuracy** | **0.865** | 0.851 | −1.4 pt |
+| international recall | 0.273 | **0.742** | 18 → **49** of 66 caught |
+| international precision | 0.600 | 0.490 | more false alarms |
+| kolkata recall | 0.951 | 0.882 | 541 → 502 correct |
+| macro-F1 | 0.776 | **0.803** | +2.7 pt |
+| weighted-F1 | 0.861 | 0.856 | −0.5 pt |
+
+**Confusion matrix, weighted run** (rows = true, cols = pred):
+
+| true ↓ / pred → | kolkata | state | national | sports | ent. | int'l |
+|---|---|---|---|---|---|---|
+| **kolkata** | **502** | 48 | 10 | 2 | 4 | 3 |
+| **state** | 5 | **240** | 20 | 1 | 4 | 9 |
+| **national** | 1 | 17 | **119** | 3 | 6 | 29 |
+| **sports** | 0 | 4 | 3 | **179** | 4 | 2 |
+| **entertainment** | 0 | 2 | 5 | 3 | **112** | 8 |
+| **international** | 0 | 0 | **11** | 2 | 4 | **49** |
+
+The mechanism is visible in the two matrices: unweighted, 31 of 66 `international` articles leaked
+into `national`; weighted, that leak shrinks to **11** — but `kolkata` (weight 0.41, its mistakes
+now cheap) starts bleeding **48** articles into `state` (19 before). Rare class fixed, big class
+taxed.
+
+**Verdict: measured, and rejected for the headline.** Weighting did exactly what it promises —
+macro-F1 up 2.7 points, minority recall nearly tripled — but the reported `sna.bn` metric is
+**accuracy**, which dropped 1.4 points because the test set carries the same imbalance as train:
+down-weighting `kolkata` hurts on exactly the examples that dominate the score. It's also a
+**deviation from the paper**: neither Google's reference `run_classifier.py` (plain mean of
+per-example CE) nor HuggingFace's `BertForSequenceClassification` (`CrossEntropyLoss()` with no
+`weight=`) weights the loss. So the flag ships off and the unweighted run stays the winner — if
+your deployment cares about macro-F1 (every class equally important), flip it back on: same one-line
+config change. (Untried alternative: a `WeightedRandomSampler` to oversample the minority instead
+of re-weighting the loss.)
 
 ## Running it
 
