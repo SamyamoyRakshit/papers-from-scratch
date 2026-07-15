@@ -130,3 +130,65 @@ def create_finetune_dataloaders(config, tokenizer):
     train_loader = DataLoader(train_ds, batch_size=config.training.batch_size, shuffle=True, collate_fn=collate)
     val_loader = DataLoader(val_ds, batch_size=config.training.batch_size, shuffle=False, collate_fn=collate)
     return train_loader, val_loader, num_labels
+
+
+def create_test_dataloader(config, tokenizer):
+    """
+    Build the held-out TEST DataLoader for evaluation (evaluate.py).
+
+    The eval-time mirror of create_finetune_dataloaders' val branch: same tokenize +
+    [CLS]/[SEP] pack + dynamic padding, but pinned to the "test" split. This is the
+    split training NEVER sees — create_finetune_dataloaders resolves its val to
+    "validation" (sna.bn ships train + validation + test), leaving "test" untouched
+    precisely so it can be scored here once, as the reportable number (val accuracy
+    only *picked* the fine-tune winner; test is what you'd cite).
+
+    Args:
+        config:    the loaded FinetuneConfig. Same fields as create_finetune_dataloaders
+                   — config.data (dataset_id, subset, text_field, label_field, num_labels)
+                   and config.training (max_seq_len, batch_size).
+        tokenizer: the WordPiece tokenizer the encoder was pretrained (and fine-tuned)
+                   with — tokenizes text and supplies the [PAD] id.
+
+    Returns:
+        test_loader: DataLoader over the test split, NOT shuffled (order is irrelevant
+                     for scoring; keeping it stable makes any per-row debugging repeatable).
+        num_labels:  number of classes — sizes/validates the classifier head.
+        label_names: human-readable class names for the report (see below). Training
+                     never needs this; only evaluate.py's confusion matrix / P-R-F1
+                     table use it, purely to print "sports" instead of an anonymous "3".
+
+    Note — num_labels vs label_names: distinct concerns.
+        - num_labels is the MATH (how many output logits) — feeds the model.
+        - label_names is the LABELLING (what each index is called) — feeds the report.
+          Positions align: label_names[3] names class 3 in the confusion matrix.
+
+    Example:
+        test_loader, num_labels, label_names = create_test_dataloader(cfg, tok)
+        # sna.bn → 1411 test examples, num_labels = 6
+        # label_names = ['kolkata', 'state', 'national', 'sports', 'entertainment', 'international']
+    """
+    from datasets import ClassLabel   # local import: only the eval path needs the type check
+
+    d = config.data
+    dataset = load_dataset(d.dataset_id, d.subset) if d.subset else load_dataset(d.dataset_id)
+    test_split = dataset["test"]       # the held-out split — deliberately NOT "validation"
+
+    # num_labels: config wins if pinned, else count distinct labels (assumes contiguous
+    # 0..N-1, true for sna.bn's ClassLabel) — same `or` fallback as create_finetune_dataloaders.
+    num_labels = d.num_labels or len(set(test_split[d.label_field]))
+
+    # feat is the column's SCHEMA object (one per split), not the data: for a ClassLabel
+    # column it carries the int->name table. sna.bn -> ClassLabel(names=['kolkata', ...]).
+    feat = test_split.features[d.label_field]
+    # Prefer the dataset's real topic names; fall back to str indices ['0'..'N-1'] if the
+    # label column isn't a ClassLabel (e.g. a plain int/Value column) so the report never crashes.
+    label_names = feat.names if isinstance(feat, ClassLabel) else [str(i) for i in range(num_labels)]
+    logger.info(f"Test split: {len(test_split)} examples, {num_labels} labels")
+
+    collate = partial(_collate, pad_id=tokenizer.token_to_id("[PAD]"))
+    test_ds = ClassificationDataset(test_split, tokenizer, d.text_field, d.label_field,
+                                    config.training.max_seq_len)
+    test_loader = DataLoader(test_ds, batch_size=config.training.batch_size,
+                             shuffle=False, collate_fn=collate)   # no shuffle — scoring is order-invariant
+    return test_loader, num_labels, label_names
