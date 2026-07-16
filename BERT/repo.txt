@@ -7,80 +7,86 @@
 #   [new]    BERT-specific, written from scratch
 #
 # Imported from ../transformer/ (apple-to-apple, no change — run from repo root so
-# `transformer` resolves as a package; both modules import only torch, no relative deps):
+# `transformer` resolves as a package; all three import only torch, no relative deps):
 #   transformer/models/modules/multi_head_attention.py  → MultiHeadAttention
 #   transformer/models/modules/layer_norm.py            → LayerNorm
 #   transformer/utils/mask_utils.py                     → create_padding_mask (encoder needs only the pad mask)
-#   transformer/utils/logging_setup.py                  → logging config
+# Shared across replications (repo root): common/run_utils.py — device, seed, git hash,
+# sha256, logging, leaderboard helpers.
 #
 ├── ARTICLE.md                       # Long-form write-up of the build (the article)
-├── README.md                        # Setup + how to run + results
+├── README.md                        # Results + docs map + setup + full usage runbook
 ├── repo.txt                         # This annotated file tree
 ├── requirements.txt                 # pip fallback (pyproject.toml at repo root is the source of truth)
-├── just_for_knowledge.md            # Theory + math + paper notes (scratch)
-├── markdown_images/                 # Figures used in ARTICLE.md
-│   ├── bert_architecture.png        # Paper Figure 1 — pre-training + fine-tuning
-│   ├── input_embeddings.png         # Paper Figure 2 — token + segment + position sum
-│   ├── mlm_nsp.png                  # The two pre-training objectives
-│   └── attention_bidirectional.png  # bidirectional vs causal (BERT vs GPT)
+├── markdown_images/                 # Figures used by README + docs
+│   ├── gradio_app.png               # the app classifying a Bengali sentence (README/inference.md)
+│   ├── TensorBoard/                 # pre-training curve screenshots (pretrain.md)
+│   └── Tensorboard_FineTune/        # fine-tune sweep curve screenshots (finetune.md)
 ├── models/
 │   ├── __init__.py
 │   ├── bert.py                      # [new]   full model: embeddings + encoder + pooler ([CLS])
 │   ├── encoder.py                   # [tweak] copy of transformer's; only change = FFN import line → BERT's GELU feed_forward (MHA+LayerNorm still imported from transformer)
 │   ├── heads.py                     # [new]   MLM head (weight-tied to token emb) + NSP head
-│   ├── bert_for_pretraining.py      # [new]   top assembly: BERTModel + BERTPreTrainingHeads (tie + head-init wired here)
+│   ├── bert_for_pretraining.py      # [new]   pre-train assembly: BERTModel + BERTPreTrainingHeads (tie + head-init wired here)
+│   ├── bert_for_classification.py   # [new]   fine-tune assembly: body + dropout + Linear(H, K) on pooled [CLS] (§4.1)
 │   └── modules/
 │       ├── __init__.py
 │       ├── embeddings.py            # [new]   token + SEGMENT + LEARNED position, summed + LayerNorm + dropout (NO √d_model)
-│       └── feed_forward.py          # [tweak] copy of transformer's; swap nn.ReLU() → nn.GELU()
+│       └── feed_forward.py          # [tweak] copy of transformer's; swap ReLU → tanh-GELU
 │       # MultiHeadAttention, LayerNorm → [import] from ../transformer (see header)
 │       # positional_encoding NOT used — BERT learns position emb inside embeddings.py
 ├── utils/
 │   ├── __init__.py
-│   ├── config.py                    # [adapt] pydantic YAML config; add mlm_probability, num_segments, task fields
+│   ├── config.py                    # [adapt] strict pydantic YAML config (pre-training), repo-root-relative paths
 │   ├── masking.py                   # [new]   MLM masking: 15% of tokens → 80% [MASK] / 10% random / 10% keep
 │   ├── nsp.py                       # [new]   NSP pair builder: 50% true next-sentence, 50% random sentence B
-│   ├── loss.py                      # [adapt] reuse F.cross_entropy approach; MLM CE (masked only) + NSP CE
+│   ├── loss.py                      # [adapt] reuse F.cross_entropy approach; MLM CE (masked only, ignore_index) + NSP CE
 │   ├── optimizer.py                 # [adapt] same builder shape; AdamW + linear warmup→linear decay (not Noam)
 │   ├── data_utils.py                # [adapt] tokenizer+batching pattern; new: WordPiece + [CLS]/[SEP] + MLM/NSP examples
-│   └── train_utils.py               # [adapt] training loop + checkpointing; handle two losses + two-phase
-│       # logging_setup → [import] from ../transformer (see header)
+│   ├── train_utils.py               # [adapt] pre-training loop + checkpointing; handles the two losses
+│   ├── finetune_config.py           # [new]   typed FinetuneConfig: pretrained checkpoint+snapshot → downstream dataset
+│   ├── finetune_data.py             # [new]   sna.bn → [CLS] text [SEP] ClassificationDataset → dynamic-pad loaders (+ per-class label_counts)
+│   └── finetune_utils.py            # [new]   fine-tune train/validate loop; best-by-val-acc + leaderboard + symlink
 ├── scripts/
-│   ├── prepare_corpus.py            # [new]   run-once: Bengali Wikipedia → cleaned corpus .txt (one article = one line)
+│   ├── prepare_corpus.py            # [new]   run-once: Bengali Wikipedia → cleaned corpus .txt (one article = one block)
 │   ├── _corpus_filter.py            # [new]   optional per-article keep-hook for prepare_corpus — gitignored, falls back to keep-all
-│   ├── _common.py                   # [adapt] shared model/checkpoint build+load helpers
-│   ├── pretrain.py                  # [adapt] from train.py — PRE-TRAINING entrypoint: MLM + NSP on unlabeled corpus
-│   ├── finetune.py                  # [new]   FINE-TUNING: load pretrained, add task head, train on labels
-│   ├── evaluate.py                  # [adapt] downstream metrics (accuracy / F1) on the fine-tune task
-│   ├── inference.py                 # [new]   fill-mask demo + [CLS] sentence embeddings
-│   └── app.py                       # [new]   optional local Gradio fill-mask / classification demo
+│   ├── _common.py                   # [adapt] shared checkpoint load helpers (pretrain model build + weights_only load)
+│   ├── pretrain.py                  # [adapt] from train.py — PRE-TRAINING entrypoint: MLM + NSP on the unlabeled corpus, --resume support
+│   ├── finetune.py                  # [new]   FINE-TUNING: transplant bert.* body, fresh classifier head, train on sna.bn (optional class-weighted CE via config)
+│   ├── evaluate.py                  # [adapt] held-out TEST metrics: accuracy + per-class P/R/F1 + confusion matrix
+│   ├── inference.py                 # [new]   one raw Bengali sentence → predicted topic + full softmax; owns load_finetuned_classifier() (shared with app)
+│   └── app.py                       # [new]   local Gradio demo — loads once at startup, gr.Label probability bars
 ├── configs/
-│   ├── base.yaml                    # BERT-base recipe (L=12,H=768,A=12), scaled down for M1 16GB
-│   ├── tiny.yaml                    # small model for quick pipeline sanity checks
-│   └── finetune.yaml                # fine-tuning hyperparams (lr, epochs, task head)
-├── tokenizer/                       # trained WordPiece model — runtime, gitignored
-├── checkpoints/                     # pretrained + fine-tuned .pt + leaderboard.json — runtime, gitignored
-├── logs/                            # TensorBoard event files — runtime, gitignored
+│   ├── base.yaml                    # pre-training recipe: paper BERT-base scaled for M1 16GB (L=6, H=256, A=8, d_ff=1024)
+│   ├── tiny.yaml                    # small model (L=2, H=64) for quick pipeline sanity checks
+│   └── finetune.yaml                # fine-tuning: §A.3 hyperparams (3 epochs, batch 32, lr sweep) + class_weighting flag
+├── data/                            # corpus .txt files from prepare_corpus — runtime, gitignored
+├── tokenizer/                       # trained WordPiece vocab (base/, tiny/) — runtime, gitignored
+├── checkpoints/                     # run_<ts>/ dirs (best.pt, last.pt, config.yaml snapshot) + leaderboard.json + best.pt symlink — runtime, gitignored
+├── logs/                            # TensorBoard event files (base/, finetune/) — runtime, gitignored
 └── docs/                            # per-module math + implementation write-ups
     ├── modules/
     │   ├── embeddings.md             # why three embeddings summed; learned vs sinusoidal PE
     │   ├── feed_forward.md           # GELU vs ReLU
-    │   └── reused_from_transformer.md  # note: MHA + LayerNorm imported, not re-documented
+    │   └── reused_from_transformer.md  # provenance ledger: reused unchanged vs rewritten vs dropped (+ init caveat)
     ├── architecture/
     │   ├── encoder.md                # the bidirectional encoder stack (ReLU→GELU difference)
-    │   ├── bert.md                   # full model + pooler + [CLS]/[SEP] roles
+    │   ├── bert.md                   # full model + pooler + [CLS]/[SEP] roles + reuse table
     │   ├── heads.md                  # MLM head (weight tying) + NSP head
-    │   └── bert_for_pretraining.md   # top assembly: composition + init ordering + why loss stays out
+    │   ├── bert_for_pretraining.md   # pre-train assembly: composition + init ordering + why loss stays out
+    │   └── bert_for_classification.md # fine-tune assembly: pooled [CLS] → dropout → Linear(H, K)
     ├── objectives/
     │   └── nsp.md                    # next sentence prediction — pair sampling + the [CLS] signal
     ├── utils/
     │   ├── masking.md                # MLM masking step: 15% / 80-10-10 rule, line-by-line
     │   ├── data_utils.md             # corpus → WordPiece → MLM/NSP examples → batches
-    │   ├── mask_utils.md             # padding mask only
     │   ├── optimizer.md              # AdamW + warmup/linear-decay
-    │   └── loss.md                   # combined MLM + NSP loss
+    │   ├── loss.md                   # combined MLM + NSP loss
+    │   ├── finetune_data.md          # sna.bn → ClassificationDataset → loaders (train/val/test paths)
+    │   └── finetune_utils.md         # the fine-tune loop; val picks the winner, test stays held out
     └── scripts/
-        ├── prepare_corpus.md         # building the corpus: Wikipedia → cleaned .txt (one article = one line)
-        ├── pretrain.md               # the pre-training run
-        ├── finetune.md               # the fine-tuning run
-        └── inference.md              # fill-mask + embeddings
+        ├── prepare_corpus.md         # building the corpus: Wikipedia → cleaned .txt
+        ├── pretrain.md               # the pre-training run (~28 h on mps)
+        ├── finetune.md               # the fine-tune runs: transplant, lr sweep, optional class weighting
+        ├── evaluate.md               # test report: 86.5%, confusion matrix, published-results ladder, class-weighting experiment
+        └── inference.md              # serving runbook: CLI (topic + softmax) + the Gradio app

@@ -13,5 +13,8 @@ pyyaml>=6.0               # YAML loading — utils/config.py
 tensorboard>=2.20.0       # loss curves → logs/
 tqdm==4.67.1              # progress bars
 
+# --- Evaluation (scripts/evaluate.py) ---
+numpy==2.3.1              # confusion matrix → per-class precision/recall/F1
+
 # --- Optional local demo (scripts/app.py) ---
-# gradio>=6.15.2          # fill-mask / classification UI
+gradio>=6.15.2            # news-topic classification UI (gr.Label bars)
