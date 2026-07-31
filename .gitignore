@@ -46,6 +46,7 @@ dist/
 # Dataset and data folders (optional: include if large or unnecessary to track)
 dataset/test
 dataset/train
+data/
 
 # uv or pip-lock file (optional: ignore if you want fresh install on every clone)
 uv.lock
