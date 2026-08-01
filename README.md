@@ -15,6 +15,12 @@ transformer replication's attention/LayerNorm, the way the paper itself does). E
 README tells the full story; each `docs/` holds per-module write-ups of the math and
 implementation.
 
+## Weights
+
+Trained weights are **not published yet**. To keep the repo lean (no large binaries in git
+history), all checkpoints are gitignored. They will be **released on Hugging Face** later —
+links will be added here once published.
+
 ## Author
 
 [**Samyamoy Rakshit**](https://github.com/SamyamoyRakshit)

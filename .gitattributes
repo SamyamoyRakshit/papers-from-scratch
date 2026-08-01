@@ -1,2 +1,4 @@
-*.pt filter=lfs diff=lfs merge=lfs -text
-*.pth filter=lfs diff=lfs merge=lfs -text
+# Keep GitHub's language bar accurate: don't count notebooks (their embedded
+# outputs dwarf the real Python). Shows the repo as Python, not Jupyter Notebook.
+# detectable=false removes them from stats but keeps notebook diffs visible.
+*.ipynb linguist-detectable=false

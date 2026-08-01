@@ -19,8 +19,9 @@ venv/
 # Jupyter notebook checkpoints
 .ipynb_checkpoints/
 
-# Scratch notebook — local pipeline sanity checks, not source
-check.ipynb
+# Notebooks — ignore all except the ViT showcase notebook.
+*.ipynb
+!ViT/ViT.ipynb
 
 # System files (macOS)
 .DS_Store
