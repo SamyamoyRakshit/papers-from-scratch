@@ -6,7 +6,7 @@ rebuilt in plain PyTorch — no HuggingFace models, no `nn.TransformerEncoder` �
 Bengali Wikipedia** and fine-tuned for Bengali news-topic classification, all on a single
 **Apple M1 with 16 GB of RAM**.
 
-Part of the *Replicating-Papers-On-CustomData* portfolio — and a deliberate sibling of the
+Part of the *papers-from-scratch* portfolio — and a deliberate sibling of the
 [`transformer/`](../transformer/) replication: BERT's encoder layer *is* the Transformer encoder
 layer, so `MultiHeadAttention`, `LayerNorm`, and the padding mask are **imported from
 `transformer/` unchanged** (the full ledger: [reused_from_transformer.md](docs/modules/reused_from_transformer.md)).

@@ -1,4 +1,4 @@
-# Replicating-Papers-On-CustomData
+# papers-from-scratch
 
 Paper/architecture replications of SOTA AI/ML models from scratch using PyTorch on Bengali
 data — public text corpora for BERT and the transformer, a custom hand-collected image set
@@ -34,9 +34,9 @@ If this repository's code or write-ups are useful to you, cite it as:
 ```bibtex
 @misc{rakshit2026replicating,
   author       = {Rakshit, Samyamoy},
-  title        = {Replicating-Papers-On-CustomData: SOTA architectures rebuilt from scratch
+  title        = {papers-from-scratch: SOTA architectures rebuilt from scratch
                   in PyTorch on Bengali datasets},
   year         = {2026},
-  howpublished = {\url{https://github.com/SamyamoyRakshit/Replicating-Papers-On-CustomData}}
+  howpublished = {\url{https://github.com/SamyamoyRakshit/papers-from-scratch}}
 }
 ```

@@ -1,7 +1,7 @@
 [project]
-name = "replicating-papers-on-customdata"
+name = "papers-from-scratch"
 version = "0.1.0"
-description = "Replication of SOTA AI/ML Models from Scratch Using PyTorch on a Custom Dataset"
+description = "Replication of SOTA AI Models from Scratch Using PyTorch"
 authors = [
     {name = "Samyamoy Rakshit", email = "samyamoyrakshit@gmail.com"}
 ]

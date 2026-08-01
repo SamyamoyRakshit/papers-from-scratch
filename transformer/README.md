@@ -5,7 +5,7 @@ A complete Transformer from
 rebuilt tensor-by-tensor in plain PyTorch — **no `nn.Transformer`, no `nn.MultiheadAttention`** —
 and trained to translate **English into Bengali** on a single **Apple M1 with 16 GB of RAM**.
 
-Part of the *Replicating-Papers-On-CustomData* portfolio — SOTA architectures rebuilt from
+Part of the *papers-from-scratch* portfolio — SOTA architectures rebuilt from
 scratch on a custom dataset.
 
 ## Read the full story

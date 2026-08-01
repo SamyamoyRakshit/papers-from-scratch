@@ -199,8 +199,8 @@ Everything below runs from the **repository root** (the folder *above* `transfor
 **Environment.** Python 3.12, managed with [`uv`](https://github.com/astral-sh/uv):
 
 ```bash
-git clone https://github.com/samyamoyrakshit/Replicating-Papers-On-CustomData.git
-cd Replicating-Papers-On-CustomData
+git clone https://github.com/samyamoyrakshit/papers-from-scratch.git
+cd papers-from-scratch
 uv sync                    # installs torch, sentencepiece, sacrebleu, gradio, … from pyproject.toml
 ```
 
