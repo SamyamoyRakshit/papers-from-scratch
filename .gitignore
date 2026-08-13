@@ -87,6 +87,7 @@ transformer/docs/architecture/
 transformer/docs/modules/
 transformer/docs/scripts/
 transformer/docs/utils/
+common/docs/
 
 # Doc/article figures. ViT/markdown_images/ is intentionally NOT ignored —
 # the tracked showcase notebook (ViT/ViT.ipynb) embeds those images.
