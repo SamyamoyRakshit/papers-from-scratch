@@ -68,8 +68,30 @@ BERT/data/
 # Private corpus filter — not shipped publicly
 BERT/scripts/_corpus_filter.py
 
-# Markdowns
-# ViT/just_for_knowledge.md
+# --- Docs, articles, scratch notes: kept locally, not published to the repo ---
+# The blog is the canonical home for the long-form write-ups.
+ARTICLE.md
+
+# Scratch / personal notes (any dir): theory dumps, command cheatsheets.
+just_for_knowledge.md
+command_to_remember.md
+
+# Verbose per-module docs — superseded by docs/{getting-started,training,architecture}.md.
+# The three standardized top-level docs/*.md stay tracked (only the subdirs are ignored).
+BERT/docs/architecture/
+BERT/docs/modules/
+BERT/docs/objectives/
+BERT/docs/scripts/
+BERT/docs/utils/
+transformer/docs/architecture/
+transformer/docs/modules/
+transformer/docs/scripts/
+transformer/docs/utils/
+
+# Doc/article figures. ViT/markdown_images/ is intentionally NOT ignored —
+# the tracked showcase notebook (ViT/ViT.ipynb) embeds those images.
+BERT/markdown_images/
+transformer/markdown_images/
 
 # gradio
 .gradio

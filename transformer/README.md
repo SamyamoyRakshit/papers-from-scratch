@@ -8,17 +8,13 @@ and trained to translate **English into Bengali** on a single **Apple M1 with 16
 Part of the *papers-from-scratch* portfolio — SOTA architectures rebuilt from
 scratch on a custom dataset.
 
-## Read the full story
+## Documentation
 
-- 📖 **[ARTICLE.md](ARTICLE.md)** — the long-form write-up: every component explained with
-  worked numerical examples, the 16 GB war stories (the NaN born in attention, the
-  slow-motion OOM), and the results told honestly.
-- 📐 **[docs/](docs/)** — per-module deep dives (the math + implementation) for
-  [attention](docs/modules/multi_head_attention.md), [positional encoding](docs/modules/positional_encoding.md),
-  [layer norm](docs/modules/layer_norm.md), the [encoder](docs/architecture/encoder.md) /
-  [decoder](docs/architecture/decoder.md) / [full model](docs/architecture/transformer.md),
-  and the scripts ([train](docs/scripts/train.md) / [inference](docs/scripts/inference.md) /
-  [evaluate](docs/scripts/evaluate.md)).
+- **[Getting Started](docs/getting-started.md)** — install and verify the pipeline on the tiny config (~2 min).
+- **[Training](docs/training.md)** — reproduce the result end to end (train → evaluate → translate).
+- **[Architecture & Configuration](docs/architecture.md)** — model spec, config field reference, checkpoint layout.
+- **The story** — the full write-up, with every component explained and the results told honestly, lives on the blog:
+  [Attention Is All You Need, from scratch](https://www.samyamoyrakshit.com/blog/attention-from-scratch/).
 
 ## What's hand-written
 
@@ -41,7 +37,7 @@ Headline model: the 30-epoch `base` run — best val loss **6.004** (epoch 24) �
 BLEU is humble (production En–Bn scores in the 20s–30s) — and that's the honest point: this is
 a *correct, from-scratch* Transformer learning to translate on a laptop, with the ≈6.6× fewer
 training tokens / ~31× smaller batch gap reported openly rather than hidden. See
-[ARTICLE.md → Part 7](ARTICLE.md) for the full breakdown.
+the [write-up](https://www.samyamoyrakshit.com/blog/attention-from-scratch/) for the full breakdown.
 
 ## Architecture / Configs
 
@@ -111,8 +107,7 @@ models/     # Transformer + encoder/decoder + modules (attention, PE, FFN, layer
 utils/      # config, data, masks, optimizer (Noam), loss, trainer, logging
 scripts/    # train / evaluate / inference / app (Gradio) + auto_resume
 configs/    # base.yaml, tiny.yaml
-docs/       # per-module math + implementation write-ups
-ARTICLE.md  # the full long-form article
+docs/       # getting-started, training, architecture (see "Documentation")
 ```
 
 ## How the pieces fit together

@@ -14,14 +14,9 @@
 # Shared across replications (repo root): common/run_utils.py — device, seed, git hash,
 # sha256, logging, leaderboard helpers.
 #
-├── ARTICLE.md                       # Long-form write-up of the build (the article)
 ├── README.md                        # Results + docs map + setup + full usage runbook
 ├── repo.txt                         # This annotated file tree
 ├── requirements.txt                 # pip fallback (pyproject.toml at repo root is the source of truth)
-├── markdown_images/                 # Figures used by README + docs
-│   ├── gradio_app.png               # the app classifying a Bengali sentence (README/inference.md)
-│   ├── TensorBoard/                 # pre-training curve screenshots (pretrain.md)
-│   └── Tensorboard_FineTune/        # fine-tune sweep curve screenshots (finetune.md)
 ├── models/
 │   ├── __init__.py
 │   ├── bert.py                      # [new]   full model: embeddings + encoder + pooler ([CLS])
@@ -64,29 +59,7 @@
 ├── tokenizer/                       # trained WordPiece vocab (base/, tiny/) — runtime, gitignored
 ├── checkpoints/                     # run_<ts>/ dirs (best.pt, last.pt, config.yaml snapshot) + leaderboard.json + best.pt symlink — runtime, gitignored
 ├── logs/                            # TensorBoard event files (base/, finetune/) — runtime, gitignored
-└── docs/                            # per-module math + implementation write-ups
-    ├── modules/
-    │   ├── embeddings.md             # why three embeddings summed; learned vs sinusoidal PE
-    │   ├── feed_forward.md           # GELU vs ReLU
-    │   └── reused_from_transformer.md  # provenance ledger: reused unchanged vs rewritten vs dropped (+ init caveat)
-    ├── architecture/
-    │   ├── encoder.md                # the bidirectional encoder stack (ReLU→GELU difference)
-    │   ├── bert.md                   # full model + pooler + [CLS]/[SEP] roles + reuse table
-    │   ├── heads.md                  # MLM head (weight tying) + NSP head
-    │   ├── bert_for_pretraining.md   # pre-train assembly: composition + init ordering + why loss stays out
-    │   └── bert_for_classification.md # fine-tune assembly: pooled [CLS] → dropout → Linear(H, K)
-    ├── objectives/
-    │   └── nsp.md                    # next sentence prediction — pair sampling + the [CLS] signal
-    ├── utils/
-    │   ├── masking.md                # MLM masking step: 15% / 80-10-10 rule, line-by-line
-    │   ├── data_utils.md             # corpus → WordPiece → MLM/NSP examples → batches
-    │   ├── optimizer.md              # AdamW + warmup/linear-decay
-    │   ├── loss.md                   # combined MLM + NSP loss
-    │   ├── finetune_data.md          # sna.bn → ClassificationDataset → loaders (train/val/test paths)
-    │   └── finetune_utils.md         # the fine-tune loop; val picks the winner, test stays held out
-    └── scripts/
-        ├── prepare_corpus.md         # building the corpus: Wikipedia → cleaned .txt
-        ├── pretrain.md               # the pre-training run (~28 h on mps)
-        ├── finetune.md               # the fine-tune runs: transplant, lr sweep, optional class weighting
-        ├── evaluate.md               # test report: 86.5%, confusion matrix, published-results ladder, class-weighting experiment
-        └── inference.md              # serving runbook: CLI (topic + softmax) + the Gradio app
+└── docs/                            # standardized docs (Diátaxis; the "why" lives on the blog)
+    ├── getting-started.md           # install + verify the pipeline on the tiny config
+    ├── training.md                  # reproduce 86.5%: pretrain → finetune → evaluate → serve
+    └── architecture.md              # model spec, config field reference, checkpoint layout

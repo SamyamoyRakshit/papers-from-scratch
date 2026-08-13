@@ -9,7 +9,7 @@ Bengali Wikipedia** and fine-tuned for Bengali news-topic classification, all on
 Part of the *papers-from-scratch* portfolio — and a deliberate sibling of the
 [`transformer/`](../transformer/) replication: BERT's encoder layer *is* the Transformer encoder
 layer, so `MultiHeadAttention`, `LayerNorm`, and the padding mask are **imported from
-`transformer/` unchanged** (the full ledger: [reused_from_transformer.md](docs/modules/reused_from_transformer.md)).
+`transformer/` unchanged** (the full ledger is in [What's hand-written vs reused](#whats-hand-written-vs-reused) below).
 
 ## Results
 
@@ -26,28 +26,15 @@ to the published numbers on the same dataset and splits (Kakwani et al. 2020):
 
 A 7.5M-parameter model pre-trained in ~28 laptop-hours beats mBERT by ~6 points and IndicBERT by
 ~8, landing ~1.1 under XLM-R (~17× its size). Full analysis, confusion matrices, and honest
-caveats: [docs/scripts/evaluate.md](docs/scripts/evaluate.md).
+caveats: the [write-up](https://www.samyamoyrakshit.com/blog/bert-from-scratch/).
 
-![Gradio demo — a Bengali FIFA World Cup sentence classified as sports](markdown_images/gradio_app.png)
+## Documentation
 
-## Read the docs
-
-Every module has a write-up with the math, worked numerical examples, and mermaid diagrams:
-
-- **Architecture** — [the BERT body](docs/architecture/bert.md) ·
-  [encoder](docs/architecture/encoder.md) · [MLM/NSP heads](docs/architecture/heads.md) ·
-  [pre-training model](docs/architecture/bert_for_pretraining.md) ·
-  [classification model](docs/architecture/bert_for_classification.md)
-- **Modules** — [input embeddings](docs/modules/embeddings.md) (3-way sum, learned positions) ·
-  [feed-forward](docs/modules/feed_forward.md) (GELU) ·
-  [reused from transformer/](docs/modules/reused_from_transformer.md)
-- **Objectives** — [MLM masking, 80/10/10](docs/utils/masking.md) · [NSP](docs/objectives/nsp.md)
-- **Pipelines** — [corpus prep](docs/scripts/prepare_corpus.md) ·
-  [pre-training data](docs/utils/data_utils.md) · [loss](docs/utils/loss.md) ·
-  [optimizer](docs/utils/optimizer.md) · [fine-tune data](docs/utils/finetune_data.md) ·
-  [fine-tune loop](docs/utils/finetune_utils.md)
-- **Runbooks** — [pretrain](docs/scripts/pretrain.md) · [finetune](docs/scripts/finetune.md) ·
-  [evaluate](docs/scripts/evaluate.md) · [inference + app](docs/scripts/inference.md)
+- **[Getting Started](docs/getting-started.md)** — install and verify the pipeline on the tiny config (~15 min).
+- **[Training](docs/training.md)** — reproduce the 86.5% result end to end (pre-train → fine-tune → evaluate).
+- **[Architecture & Configuration](docs/architecture.md)** — model spec, config field reference, checkpoint layout.
+- **The story** — the full write-up, with the *why* behind every choice, lives on the blog:
+  [BERT, from scratch](https://www.samyamoyrakshit.com/blog/bert-from-scratch/).
 
 ## What's hand-written vs reused
 
@@ -138,8 +125,7 @@ utils/           # config, data_utils, masking (80/10/10), nsp, loss, optimizer,
                  # finetune_{config,data,utils}
 scripts/         # prepare_corpus / pretrain / finetune / evaluate / inference / app (Gradio)
 configs/         # base.yaml, tiny.yaml, finetune.yaml
-docs/            # per-module math + implementation write-ups (see "Read the docs")
-markdown_images/ # figures used by the docs
+docs/            # getting-started, training, architecture (see "Documentation")
 ```
 
 ## How the pieces fit together
