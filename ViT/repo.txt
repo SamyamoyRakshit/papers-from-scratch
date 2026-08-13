@@ -1,0 +1,21 @@
+.
+├── README.md                        # Paper link + entry point
+├── repo.txt                         # This annotated file tree
+├── ViT.ipynb                        # Main experiment interface — from-scratch ViT vs pre-trained ViT-B/16
+├── markdown_images/                 # Figures embedded in ViT.ipynb (paper diagrams + architecture sketches)
+│   ├── ViT architecture.png
+│   ├── ViT_table_1.jpeg
+│   ├── add_cls_token.png
+│   ├── mlp_block.png
+│   ├── msa_block.png
+│   ├── pos_embedding.png
+│   └── table_3.png
+├── models/                          # saved .pth checkpoints — runtime, gitignored
+└── utils/
+    ├── __init__.py
+    ├── data_setup.py                # create_dataloaders() via torchvision ImageFolder
+    ├── engine.py                    # train_step() / test_step() / train() loop
+    ├── split_dataset.py             # split raw image data into train/test
+    ├── predictions.py               # inference on single images
+    ├── saving.py                    # model persistence (save/load .pth)
+    └── helper_functions.py          # misc plotting / accuracy helpers

@@ -11,9 +11,9 @@ for ViT — everything trained on a single Apple M1 with 16 GB of RAM.
 | [**ViT**](ViT/) | Dosovitskiy et al., 2021 | Bengali temple image classification (hand-collected dataset) | "An Image is Worth 16x16 Words", from scratch |
 
 No `nn.Transformer`, no HuggingFace models — every module is hand-written (and BERT reuses the
-transformer replication's attention/LayerNorm, the way the paper itself does). Each folder's
-README tells the full story; each `docs/` holds per-module write-ups of the math and
-implementation.
+transformer replication's attention/LayerNorm, the way the paper itself does). Each folder has
+its own README with results, setup, and usage; BERT and the transformer also carry a `docs/`
+set (getting started, training, architecture), while ViT lives in a single showcase notebook.
 
 ## Weights
 
