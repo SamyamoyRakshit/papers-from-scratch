@@ -91,6 +91,6 @@ re-decode without retraining.
 BLEU is humble by design — production En–Bn scores land in the 20s–30s. This is a
 *correct, from-scratch* Transformer on a laptop, with the ≈6.6× fewer training
 tokens and ~31× smaller batch reported openly. The full breakdown is on the blog:
-[Attention Is All You Need, from scratch](https://www.samyamoyrakshit.com/blog/attention-from-scratch/).
+[Rebuilding "Attention Is All You Need" From Scratch on a Mac M1 with 16GB of RAM](https://www.samyamoyrakshit.com/blog/attention-from-scratch/).
 
 Config field reference and checkpoint layout: [Architecture](architecture.md).

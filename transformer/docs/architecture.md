@@ -4,7 +4,7 @@ Reference for the model dimensions, the config fields you'll actually touch, and
 the checkpoint layout. For the paper-section → source-file map and the
 train/inference/evaluate flow diagrams, see the [README](../README.md); for *why*
 each choice was made, the blog:
-[Attention Is All You Need, from scratch](https://www.samyamoyrakshit.com/blog/attention-from-scratch/).
+[Rebuilding "Attention Is All You Need" From Scratch on a Mac M1 with 16GB of RAM](https://www.samyamoyrakshit.com/blog/attention-from-scratch/).
 
 ## Model specification
 

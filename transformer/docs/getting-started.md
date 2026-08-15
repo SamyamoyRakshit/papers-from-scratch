@@ -53,4 +53,4 @@ The first run creates everything else; nothing here is committed to git.
 - **[Training](training.md)** — reproduce the real `base` run (val loss ≈6.0, BLEU 0.17).
 - **[Architecture](architecture.md)** — model spec, config field reference, checkpoint convention.
 - **The story (the *why*)** — the full write-up lives on the blog:
-  [Attention Is All You Need, from scratch](https://www.samyamoyrakshit.com/blog/attention-from-scratch/).
+  [Rebuilding "Attention Is All You Need" From Scratch on a Mac M1 with 16GB of RAM](https://www.samyamoyrakshit.com/blog/attention-from-scratch/).

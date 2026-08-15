@@ -14,7 +14,7 @@ scratch on a custom dataset.
 - **[Training](docs/training.md)** — reproduce the result end to end (train → evaluate → translate).
 - **[Architecture & Configuration](docs/architecture.md)** — model spec, config field reference, checkpoint layout.
 - **The story** — the full write-up, with every component explained and the results told honestly, lives on the blog:
-  [Attention Is All You Need, from scratch](https://www.samyamoyrakshit.com/blog/attention-from-scratch/).
+  [Rebuilding "Attention Is All You Need" From Scratch on a Mac M1 with 16GB of RAM](https://www.samyamoyrakshit.com/blog/attention-from-scratch/).
 
 ## What's hand-written
 
@@ -190,18 +190,18 @@ AI4Bharat Samanantar (8.5M En-Bn pairs, 500K subset)
    beam search — generate the Bengali one token at a time (beam_size=4, α=1.0):
 
       start: <sos>
-        │
-        ▼
+             │
+             ▼
       ┌──────────────────────────────────────────────────┐
       │  LOOP (one pass = one new token):                │
       │    1. Decoder(so-far, memory)  →  logits         │
       │    2. pick the top few next-word candidates      │
       │    3. keep the 4 best partial sentences (beams)  │
       └──────────────────────────────────────────────────┘
-        │
-        ▼  repeat the loop until each sentence hits <eos> (or 64 tokens)
-        │
-        ▼
+             │
+             ▼  repeat the loop until each sentence hits <eos> (or 64 tokens)
+             │
+             ▼
    finished sentences  →  pick the best (score ÷ length^α)
              │
              ▼
