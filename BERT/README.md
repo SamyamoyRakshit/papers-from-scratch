@@ -19,13 +19,13 @@ to the published numbers on the same dataset and splits (Kakwani et al. 2020):
 | approach | params | `sna.bn` test acc |
 |---|---|---|
 | IndicFT word embeddings + k-NN (no fine-tuning) | — | 71.82 |
-| IndicBERT base, fine-tuned (ALBERT, 11 langs) | 12M | 78.45 |
+| IndicBERT base, fine-tuned (ALBERT, 12 langs) | 12M | 78.45 |
 | mBERT, fine-tuned (104 langs) | 110M | 80.23 |
 | **this replication (from scratch, Bengali only)** | **~7.5M** | **86.5** |
 | XLM-R base, fine-tuned (100 langs) | 125M | **87.60** |
 
 A 7.5M-parameter model pre-trained in ~28 laptop-hours beats mBERT by ~6 points and IndicBERT by
-~8, landing ~1.1 under XLM-R (~17× its size). Full analysis, confusion matrices, and honest
+~8, landing 1.1 percentage points under XLM-R (~17× its size by the paper's own parameter counts). Full analysis, confusion matrices, and honest
 caveats: the [write-up](https://www.samyamoyrakshit.com/blog/bert-from-scratch/).
 
 ## Documentation
@@ -34,7 +34,7 @@ caveats: the [write-up](https://www.samyamoyrakshit.com/blog/bert-from-scratch/)
 - **[Training](docs/training.md)** — reproduce the 86.5% result end to end (pre-train → fine-tune → evaluate).
 - **[Architecture & Configuration](docs/architecture.md)** — model spec, config field reference, checkpoint layout.
 - **The story** — the full write-up, with the *why* behind every choice, lives on the blog:
-  [BERT, from scratch](https://www.samyamoyrakshit.com/blog/bert-from-scratch/).
+  [Pre-training a Bengali BERT From Scratch on a 16GB M1 Mac — and Onto an IndicGLUE Leaderboard](https://www.samyamoyrakshit.com/blog/bert-from-scratch/).
 
 ## What's hand-written vs reused
 

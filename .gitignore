@@ -76,6 +76,10 @@ ARTICLE.md
 just_for_knowledge.md
 command_to_remember.md
 
+# Personal study/replication plan — private, changes often.
+ROADMAP.md
+PUBLISHING.md
+
 # Verbose per-module docs — superseded by docs/{getting-started,training,architecture}.md.
 # The three standardized top-level docs/*.md stay tracked (only the subdirs are ignored).
 BERT/docs/architecture/

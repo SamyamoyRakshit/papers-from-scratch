@@ -93,4 +93,4 @@ uv run python -m BERT.scripts.app            # http://127.0.0.1:7860
 | Evaluate | `evaluate` | seconds | **test acc 0.865** |
 
 Config field reference and the checkpoint/run layout: [Architecture](architecture.md). \
-The *why* behind every choice: [BERT, from scratch](https://www.samyamoyrakshit.com/blog/bert-from-scratch/).
+The *why* behind every choice: [Pre-training a Bengali BERT From Scratch on a 16GB M1 Mac — and Onto an IndicGLUE Leaderboard](https://www.samyamoyrakshit.com/blog/bert-from-scratch/).

@@ -60,4 +60,4 @@ The first two commands create everything else; nothing here is committed to git.
 - **[Training](training.md)** — reproduce the real 86.5% result on the `base` config.
 - **[Architecture](architecture.md)** — model spec, config field reference, checkpoint convention.
 - **The story (the *why*)** — the full write-up lives on the blog:
-  [BERT, from scratch](https://www.samyamoyrakshit.com/blog/bert-from-scratch/).
+  [Pre-training a Bengali BERT From Scratch on a 16GB M1 Mac — and Onto an IndicGLUE Leaderboard](https://www.samyamoyrakshit.com/blog/bert-from-scratch/).

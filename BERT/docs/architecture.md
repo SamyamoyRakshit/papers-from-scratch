@@ -3,7 +3,7 @@
 Reference for the model dimensions, the config fields you'll actually touch, and
 the checkpoint layout. For the paper-section → source-file map and the two-stage
 pipeline diagram, see the [README](../README.md); for *why* each choice was made,
-the blog: [BERT, from scratch](https://www.samyamoyrakshit.com/blog/bert-from-scratch/).
+the blog: [Pre-training a Bengali BERT From Scratch on a 16GB M1 Mac — and Onto an IndicGLUE Leaderboard](https://www.samyamoyrakshit.com/blog/bert-from-scratch/).
 
 ## Model specification
 
