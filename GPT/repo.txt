@@ -45,9 +45,14 @@
 │   │                                #   `tokenizer/` rule that would silently untrack this whole package.
 │   │                                #   `tokenizer/` below stays the RUNTIME artifact dir, as in BERT/.
 │   ├── __init__.py
-│   ├── pretokenize.py               # [new] GPT-2's regex split, de-Anglicised: keep ` ?\p{L}+ | ?\p{N}+ | ?[^\s\p{L}\p{N}]+ | \s+`,
-│   │                                #       drop the English contraction alternations ('s|'t|'re|'ve|'m|'ll|'d) — they
-│   │                                #       never fire on Bengali and only cost regex time
+│   ├── pretokenize.py               # [new] GPT-2's regex split, fixed for Bengali:
+│   │                                #       ` ?[\p{L}\p{M}]+ | ?\p{N}+ | ?[^\s\p{L}\p{M}\p{N}]+ | \s+(?!\S) | \s+`
+│   │                                #         1. ADD \p{M}: vowel signs, hasanta, nukta are Unicode MARKS, not
+│   │                                #            letters, so GPT-2's ` ?\p{L}+` cuts every word at them
+│   │                                #            (কলকাতায় → কলক|া|ত|া|য|়). Full bn_wiki: 31.0M chunks → 8.1M.
+│   │                                #         2. DROP the English contractions ('s|'t|'re|'ve|'m|'ll|'d) — they
+│   │                                #            never fire on Bengali (only 0.3 s of the 9.2 s → 2.4 s speedup)
+│   │                                #       Known gap: ZWNJ/ZWJ (Cf) still split ~0.17% of words. docs/bpe/pretokenize.md
 │   ├── byte_coder.py                # [new] GPT-2's bytes_to_unicode() — the 256→printable-codepoint map that
 │   │                                #       keeps vocab files human-readable and dodges control chars
 │   └── bpe.py                       # [new] the merge loop: train(corpus, vocab_size) → merges + vocab;
