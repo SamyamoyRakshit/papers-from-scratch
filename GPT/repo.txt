@@ -6,7 +6,7 @@
 # Why the folder is `GPT/` and not `GPT2/`:
 #   GPT-3 is the SAME architecture ("We use the same model and architecture as GPT-2 …
 #   with the exception that we use alternating dense and locally banded sparse attention"),
-#   so the paper variant is a CONFIG, not a folder — configs/gpt2.yaml names the model,
+#   so the paper variant is a CONFIG, not a folder — configs/base.yaml names the model,
 #   the way minGPT does with `model_type` and nanoGPT with config/train_*.py.
 #   (`GPT-2/` is also unusable: `python -m GPT-2.scripts.pretrain` is a syntax error.)
 #
@@ -24,6 +24,7 @@
 #                                                   no code change needed to go from encoder to decoder)
 #   transformer/utils/mask_utils.py              → create_causal_mask     (BERT imported create_padding_mask; GPT
 #                                                                          takes the OTHER half of the same file)
+#   transformer/utils/config.py                  → _Strict                (pydantic base: extra="forbid", strict=True)
 #   BERT/models/modules/feed_forward.py          → gelu                   (tanh approx — GPT-2 uses the identical
 #                                                                          formula; BERT §A.2 cites "following OpenAI GPT")
 #   common/run_utils.py                          → device, seed, git hash, sha256, logging, leaderboard
@@ -46,13 +47,14 @@
 │   │                                #   `tokenizer/` below stays the RUNTIME artifact dir, as in BERT/.
 │   ├── __init__.py
 │   ├── pretokenize.py               # [new] GPT-2's regex split, fixed for Bengali:
-│   │                                #       ` ?[\p{L}\p{M}]+ | ?\p{N}+ | ?[^\s\p{L}\p{M}\p{N}]+ | \s+(?!\S) | \s+`
+│   │                                #       ` ?[\p{L}\p{M}\u200c\u200d]+ | ?\p{N}+ | ?[^\s\p{L}\p{M}\p{N}\u200c\u200d]+ | \s+(?!\S) | \s+`
 │   │                                #         1. ADD \p{M}: vowel signs, hasanta, nukta are Unicode MARKS, not
 │   │                                #            letters, so GPT-2's ` ?\p{L}+` cuts every word at them
 │   │                                #            (কলকাতায় → কলক|া|ত|া|য|়). Full bn_wiki: 31.0M chunks → 8.1M.
 │   │                                #         2. DROP the English contractions ('s|'t|'re|'ve|'m|'ll|'d) — they
-│   │                                #            never fire on Bengali (only 0.3 s of the 9.2 s → 2.4 s speedup)
-│   │                                #       Known gap: ZWNJ/ZWJ (Cf) still split ~0.17% of words. docs/bpe/pretokenize.md
+│   │                                #            never fire on Bengali (only 0.3 s of the 9.0 s → 2.5 s speedup)
+│   │                                #         3. ADD ZWNJ/ZWJ (\u200c\u200d, Cf): Bengali puts them inside words (উদ্‌যাপন)
+│   │                                #            to control hasanta rendering; without them 0.17% of words split in 3 (→ 8.06M)
 │   ├── byte_coder.py                # [new] GPT-2's bytes_to_unicode() — the 256→printable-codepoint map that
 │   │                                #       keeps vocab files human-readable and dodges control chars
 │   └── bpe.py                       # [new] the merge loop: train(corpus, vocab_size) → merges + vocab;
@@ -101,6 +103,7 @@
 ├── utils/
 │   ├── __init__.py
 │   ├── config.py                    # [adapt] strict pydantic YAML config, repo-root-relative paths.
+│   │                                #         _Strict is [import]ed from transformer/ unchanged.
 │   │                                #         Cross-field guard that BERT taught us: block_size ==
 │   │                                #         max_position_embeddings. BERT allocated 512 positions and only
 │   │                                #         ever trained 128 → 98,304 dead parameters. Not repeating that.
@@ -108,7 +111,7 @@
 │   │                                #         ids; a batch is B random offsets into the memmap, x = t[i:i+T],
 │   │                                #         y = t[i+1:i+T+1]. No Dataset/DataLoader, no per-epoch tokenizing,
 │   │                                #         no padding, no attention mask. (uint16 caps vocab at 65,536 — a
-│   │                                #         real constraint on our 32k vocab choice, asserted at write time.)
+│   │                                #         real limit on vocab_size, asserted when the config loads.)
 │   ├── loss.py                      # [adapt] next-token cross-entropy, logits[:, :-1] vs targets[:, 1:].
 │   │                                #         One objective — vs BERT's joint MLM + NSP. Every token is a label,
 │   │                                #         which is why GPT gets more signal per sequence than BERT's 15%.
@@ -128,8 +131,9 @@
 │                                    #         tokens/sec. Deliberately NOT in common/ yet — one caller so far.
 ├── scripts/                         # all run from the repo root as modules: python -m GPT.scripts.<name>
 │   ├── _common.py                   # [adapt] shared model-build + weights_only checkpoint load
-│   ├── prepare_corpus.py            # [adapt] Bengali Wikipedia → corpus .txt. Same dump as BERT (20231101.bn)
-│   │                                #         on purpose: same data, same laptop, encoder vs decoder.
+│   ├── prepare_corpus.py            # [new]   BERT/data/bn_wiki.txt → GPT/data/bn_wiki.txt, <|endoftext|> after
+│   │                                #         each article. Reuses BERT's file on purpose: same text, same laptop,
+│   │                                #         encoder vs decoder. No download; paragraph newlines are lost.
 │   ├── train_tokenizer.py           # [new]   corpus .txt → BPE merges + vocab. Separate step because training
 │   │                                #         the merges is slow and you must not redo it to re-binarise.
 │   ├── prepare_data.py              # [new]   corpus .txt --(BPE)--> train.bin / val.bin (uint16). Reports the
@@ -141,16 +145,16 @@
 │   ├── generate.py                  # [new]   prompt → continuation (temperature / top-k / top-p flags)
 │   └── app.py                       # [new]   local Gradio demo — streaming text box, loads the model once
 ├── configs/
-│   ├── gpt2.yaml                    # the actual run: paper METHOD, M1 scale — L=6, H=256, A=8, d_ff=1024,
-│   │                                #   block_size=256, vocab≈32k. Mirrors BERT's L/H/A exactly so the two
+│   ├── base.yaml                    # the actual run: paper METHOD, M1 scale — L=6, H=256, A=8, d_ff=1024,
+│   │                                #   block_size=256, vocab=8192. Mirrors BERT's L/H/A exactly so the two
 │   │                                #   replications are one controlled experiment on the same hardware budget.
-│   ├── tiny.yaml                    # L=2, H=64, tiny vocab — pipeline smoke test in minutes
+│   ├── tiny.yaml                    # L=2, H=64, vocab=1024 — pipeline smoke test in minutes
 │   └── gpt2-124m.yaml               # REFERENCE ONLY — the paper's real 124M spec (L=12, H=768, A=12,
 │                                    #   block_size=1024, vocab=50257). Will OOM on 16 GB. Kept so the config
 │                                    #   dir states what is being scaled down FROM, and so the folder name
 │                                    #   `GPT/` pays off: the variant lives in configs, not in the path.
 ├── data/                            # corpus .txt + train.bin / val.bin — runtime, gitignored (.gitignore:50)
-├── tokenizer/                       # trained BPE artifacts (gpt2/, tiny/) — runtime, gitignored (.gitignore:64)
+├── tokenizer/                       # trained BPE artifacts (base/, tiny/) — runtime, gitignored (.gitignore:64)
 ├── checkpoints/                     # run_<ts>/ (best.pt, last.pt, config.yaml snapshot) + leaderboard.json
 │                                    #   + best.pt symlink — runtime, gitignored. Same convention as BERT:
 │                                    #   evaluate/generate take only --checkpoint and read the sibling snapshot.
@@ -226,8 +230,8 @@
 #   gradient accumulation            ✅                    ✅ ESSENTIAL — the only route to a
 #                                                             0.5M-token batch on one device.
 #   memmap uint16 token stream       ✅                    ✅ Full win, device-independent.
-#   weight tying (wte ↔ lm_head)     ✅                    ✅ Paper-mandated and, at 32k vocab,
-#                                                             a large fraction of the parameters.
+#   weight tying (wte ↔ lm_head)     ✅                    ✅ Paper-mandated; at vocab 8192 the
+#                                                             table is 2.1M of ~6.9M params (~30%).
 #   vocab padded to a multiple of 64 ✅ (50257→50304)      ✅ Cheap, keep it — matmul shapes
 #                                                             stay friendly.
 #   TF32 matmul precision            ✅                    ❌ CUDA-only. Silent no-op on MPS —

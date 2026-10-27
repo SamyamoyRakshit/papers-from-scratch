@@ -1,0 +1,15 @@
+# ===========================================================
+# GPT tiny config — pipeline smoke test, every step in minutes
+# ===========================================================
+
+# --- Data ---
+data:
+  source_path: "BERT/data/bn_wiki_tiny.txt"   # written by BERT/scripts/prepare_corpus.py with BERT/configs/tiny.yaml
+  corpus_path: "GPT/data/bn_wiki_tiny.txt"    # tiny corpus for pipeline checks
+  vocab_size: 1024                            # 256 bytes + 767 merges + <|endoftext|>
+
+# --- Paths ---
+paths:
+  tokenizer_dir: "GPT/tokenizer/tiny/"     # train_tokenizer.py writes vocab.json + merges.txt here
+  checkpoint_dir: "GPT/checkpoints/tiny/"
+  log_dir: "GPT/logs/tiny/"

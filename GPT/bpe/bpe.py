@@ -61,7 +61,7 @@ class BPETokenizer:
             self.vocab[new_id] = self.vocab[a] + self.vocab[b]
         self.eot_id = 256 + len(merges)
         self.vocab[self.eot_id] = EOT.encode("utf-8")
-        self._cache: dict[str, list[int]] = {}  # chunk → ids; 8.1M chunks, only 427k distinct
+        self._cache: dict[str, list[int]] = {}  # chunk → ids; 8.1M chunks, only 428k distinct
 
     @classmethod
     def train(cls, text: str, vocab_size: int) -> "BPETokenizer":
@@ -69,10 +69,10 @@ class BPETokenizer:
         Learn vocab_size - 257 merges from `text` (256 bytes + 1 for <|endoftext|>).
 
         BPE never merges across a chunk, so only the unique chunks and their counts
-        matter: bn_wiki has 8.1M chunks but only 427k distinct ones.
+        matter: bn_wiki has 8.1M chunks but only 428k distinct ones.
 
         Pair counts are updated incrementally. Recounting all pairs after every merge
-        costs ~1.8 s on bn_wiki, i.e. ~16 h for 32k merges; a merge only changes the
+        costs ~2 s on bn_wiki, i.e. ~17 h for 32k merges; a merge only changes the
         chunks that contain the pair, so only those are recounted.
         """
         num_merges = vocab_size - 257
