@@ -16,9 +16,14 @@ data:
   source_path: "BERT/data/bn_wiki.txt"   # written by BERT/scripts/prepare_corpus.py with BERT/configs/base.yaml
   corpus_path: "GPT/data/bn_wiki.txt"    # prepare_corpus.py writes here; train_tokenizer.py + prepare_data.py read it
   vocab_size: 8192                       # Paper: 50,257, §2.3. 2^13 = 256 bytes + 7,935 merges + <|endoftext|>; near BERT's 10k, a multiple of 64
+  train_path: "GPT/data/train.bin"       # prepare_data.py writes uint16 ids here
+  val_path: "GPT/data/val.bin"
+  val_split: 0.1                         # Same as BERT/configs/base.yaml: with seed 42 val is BERT's 1,621 held-out articles
 
 # --- Paths ---
 paths:
   tokenizer_dir: "GPT/tokenizer/base/"     # train_tokenizer.py writes vocab.json + merges.txt here
   checkpoint_dir: "GPT/checkpoints/base/"
   log_dir: "GPT/logs/base/"
+
+seed: 42
