@@ -107,9 +107,9 @@
 │   ├── __init__.py
 │   ├── config.py                    # [adapt] strict pydantic YAML config, repo-root-relative paths.
 │   │                                #         _Strict is [import]ed from transformer/, PathsConfig from BERT/, unchanged.
-│   │                                #         Cross-field guard that BERT taught us: block_size ==
-│   │                                #         max_position_embeddings. BERT allocated 512 positions and only
-│   │                                #         ever trained 128 → 98,304 dead parameters. Not repeating that.
+│   │                                #         block_size is ONE field: context length AND position-table
+│   │                                #         size. BERT had two (512 allocated, 128 trained) → 98,304
+│   │                                #         dead parameters. With one field they cannot differ.
 │   ├── data_utils.py                # [new]   nanoGPT-style memmap stream: train.bin / val.bin of uint16 token
 │   │                                #         ids; a batch is B random offsets into the memmap, x = t[i:i+T],
 │   │                                #         y = t[i+1:i+T+1]. No Dataset/DataLoader, no per-epoch tokenizing,
@@ -192,9 +192,12 @@
 #                                                             7.12 GB hand-rolled; T=4096 thrashes
 #                                                             (14 GB, 10.9 s); T=8192 OOMs. Real
 #                                                             flash attention is O(T) and would not
-#                                                             flinch. Use SDPA anyway for the ~30%
-#                                                             constant-factor saving, but at our
-#                                                             block_size=256 it is noise either way.
+#                                                             flinch. SDPA saved memory only at
+#                                                             T=2048 (~30%); at T=512/1024 it saved
+#                                                             nothing and ran ~5% slower. We use it
+#                                                             for the fp16 safety below and the free
+#                                                             Flash path on CUDA — not for speed at
+#                                                             block_size=256.
 #   bf16 autocast                    ✅                    ❌ SLOWER THAN fp32 ON M1. Measured:
 #                                                             4096² matmul, fp32 83 ms, bf16 140 ms
 #                                                             (1.7× WORSE). M1's GPU has no native

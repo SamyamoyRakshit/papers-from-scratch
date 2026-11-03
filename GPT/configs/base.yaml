@@ -20,6 +20,16 @@ data:
   val_path: "GPT/data/val.bin"
   val_split: 0.1                         # Same as BERT/configs/base.yaml: with seed 42 val is BERT's 1,621 held-out articles
 
+# --- Model (GPT-2 §2.3 "largely follows" GPT-1 §4.1) ---
+model:
+  num_layers: 6           # Paper: 12 (GPT-2 Table 2, smallest) — reduced for M1, same as BERT/configs/base.yaml
+  d_model: 256            # Paper: 768 — same as BERT
+  num_heads: 8            # Paper: 12 (GPT-1 §4.1) — 256/8 = 32 per head, same as BERT
+  d_ff: 1024              # Paper: 3072 = 4·H (GPT-1 §4.1) — kept 4·d_model
+  block_size: 256         # Paper: 1024, GPT-2 §2.3 (GPT-1: 512) — attention memory is O(T²) on MPS
+  dropout: 0.1            # GPT-2 doesn't state it; GPT-1 §4.1: 0.1 on residual, embedding, attention
+  attention_impl: "sdpa"  # "reference" only for the equality check against transformer/'s MHA
+
 # --- Paths ---
 paths:
   tokenizer_dir: "GPT/tokenizer/base/"     # train_tokenizer.py writes vocab.json + merges.txt here

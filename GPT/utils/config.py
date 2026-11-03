@@ -9,6 +9,7 @@ catches three classes of mistakes at load time:
 """
 import os
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import model_validator
@@ -36,8 +37,31 @@ class DataConfig(_Strict):
         return self
 
 
+class ModelConfig(_Strict):
+    num_layers: int      # L — decoder blocks
+    d_model: int         # H — width of the residual stream
+    num_heads: int       # A — attention heads
+    d_ff: int            # MLP inner width (paper: 4·H)
+    block_size: int      # T — context length AND the size of the learned position table (wpe).
+                         #   One field, not two: BERT had max_position_embeddings=512 but trained
+                         #   at 128 → 384 × 256 = 98,304 dead parameters. Here they cannot differ.
+    dropout: float
+    attention_impl: Literal["sdpa", "reference"]   # sdpa: F.scaled_dot_product_attention
+                                                   # reference: transformer/'s MHA, to check sdpa against
+
+    # mode="after" -> runs once all fields are set & type-checked, so we can compare them.
+    @model_validator(mode="after")
+    def _check(self):
+        # Heads split d_model; non-divisible -> cryptic shape error deep in attention.
+        assert self.d_model % self.num_heads == 0, \
+            f"d_model ({self.d_model}) must be divisible by num_heads ({self.num_heads})"
+        assert 0.0 <= self.dropout < 1.0, f"dropout must be in [0, 1), got {self.dropout}"
+        return self
+
+
 class Config(_Strict):
     data: DataConfig
+    model: ModelConfig
     paths: PathsConfig
     seed: int            # shuffles the articles before the train/val split
 

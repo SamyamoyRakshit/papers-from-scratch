@@ -11,6 +11,16 @@ data:
   val_path: "GPT/data/val_tiny.bin"
   val_split: 0.1
 
+# --- Model ---
+model:
+  num_layers: 2
+  d_model: 64
+  num_heads: 4            # 64/4 = 16 per head
+  d_ff: 256               # 4·d_model
+  block_size: 64
+  dropout: 0.1
+  attention_impl: "sdpa"
+
 # --- Paths ---
 paths:
   tokenizer_dir: "GPT/tokenizer/tiny/"     # train_tokenizer.py writes vocab.json + merges.txt here
