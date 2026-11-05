@@ -48,6 +48,8 @@ class ModelConfig(_Strict):
     dropout: float
     attention_impl: Literal["sdpa", "reference"]   # sdpa: F.scaled_dot_product_attention
                                                    # reference: transformer/'s MHA, to check sdpa against
+    init_std: float      # σ of N(0, σ) for every Linear / Embedding weight (GPT-1 §4.1: 0.02);
+                         #   gpt.py gives the two c_proj per block σ/√(2·num_layers) (GPT-2 §2.3)
 
     # mode="after" -> runs once all fields are set & type-checked, so we can compare them.
     @model_validator(mode="after")
@@ -56,6 +58,8 @@ class ModelConfig(_Strict):
         assert self.d_model % self.num_heads == 0, \
             f"d_model ({self.d_model}) must be divisible by num_heads ({self.num_heads})"
         assert 0.0 <= self.dropout < 1.0, f"dropout must be in [0, 1), got {self.dropout}"
+        # nn.init.normal_ takes std 0 without an error and zeroes every weight.
+        assert self.init_std > 0.0, f"init_std must be > 0, got {self.init_std}"
         return self
 
 

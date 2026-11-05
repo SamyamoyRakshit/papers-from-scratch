@@ -20,6 +20,7 @@ model:
   block_size: 64
   dropout: 0.1
   attention_impl: "sdpa"
+  init_std: 0.02
 
 # --- Paths ---
 paths:
