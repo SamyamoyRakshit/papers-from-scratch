@@ -31,6 +31,23 @@ model:
   attention_impl: "sdpa"  # "reference" only for the equality check against transformer/'s MHA
   init_std: 0.02          # GPT-1 §4.1: "a simple weight initialization of N(0, 0.02) was sufficient"
 
+# --- Training (GPT-2 §2.3 gives only the batch, 512 × 1024 tokens; the rest is GPT-3 Appendix B) ---
+training:
+  batch_size: 32          # sequences per forward pass: 32 × 256 = 8,192 tokens, fits M1 memory
+  grad_accum_steps: 8     # → 65,536 tokens per step. Paper: 524,288 = only 21 steps per pass of train.bin
+  max_steps: 1700         # ≈ 10 passes of train.bin (11.0M tokens), BERT/configs/base.yaml's 10 epochs
+  warmup_steps: 100       # GPT-3 §B: 375M tokens, more than this whole run; here ~6% of it
+  min_lr_ratio: 0.1       # GPT-3 §B: cosine "down to 10% of its value", then held there
+  clip_grad_norm: 1.0     # GPT-3 §B: "clip the global norm of the gradient at 1.0"
+  eval_interval: 100      # steps between full val passes + checkpoints
+
+# --- Optimizer (GPT-2 states none, §3 only "manually tuned"; values from GPT-3 Appendix B) ---
+optimizer:
+  lr: 6.0e-4              # GPT-3 Table 2.1 (Small, 125M). Written 6.0e-4: PyYAML reads 6e-4 as a string
+  betas: [0.9, 0.95]      # GPT-3 §B: β₂ 0.95, not BERT's 0.999
+  eps: 1.0e-8             # GPT-3 §B
+  weight_decay: 0.1       # GPT-3 §B (GPT-1 §4.1: 0.01). None on biases / LayerNorm (_decay_groups)
+
 # --- Paths ---
 paths:
   tokenizer_dir: "GPT/tokenizer/base/"     # train_tokenizer.py writes vocab.json + merges.txt here
@@ -38,3 +55,4 @@ paths:
   log_dir: "GPT/logs/base/"
 
 seed: 42
+device: "auto"        # "auto" → MPS/CUDA if available, else CPU. Options: "auto", "mps", "cpu", "cuda"

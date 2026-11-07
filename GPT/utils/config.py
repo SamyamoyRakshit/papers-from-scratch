@@ -14,6 +14,7 @@ from typing import Literal
 import yaml
 from pydantic import model_validator
 
+from BERT.utils.config import OptimizerConfig  # lr, betas, eps, weight_decay — imported unchanged
 from BERT.utils.config import PathsConfig      # tokenizer_dir, checkpoint_dir, log_dir — imported unchanged
 from transformer.utils.config import _Strict   # extra="forbid", strict=True — imported unchanged
 
@@ -63,11 +64,34 @@ class ModelConfig(_Strict):
         return self
 
 
+class TrainingConfig(_Strict):
+    batch_size: int          # B — sequences per forward pass (what fits in memory)
+    grad_accum_steps: int    # forward passes summed into one optimizer step:
+                             #   tokens per step = batch_size · grad_accum_steps · block_size
+    max_steps: int           # optimizer steps in the run; the cosine reaches its floor here
+    warmup_steps: int        # linear 0 → peak lr
+    min_lr_ratio: float      # lr floor as a fraction of the peak (GPT-3 §B: 0.1)
+    clip_grad_norm: float    # max global gradient norm (GPT-3 §B: 1.0)
+    eval_interval: int       # steps between val passes; each one writes last.pt (+ best.pt if improved)
+
+    @model_validator(mode="after")
+    def _check(self):
+        # warmup ≥ max_steps → the run ends before the peak lr and the cosine never runs.
+        assert 0 <= self.warmup_steps < self.max_steps, \
+            f"warmup_steps ({self.warmup_steps}) must be in [0, max_steps={self.max_steps})"
+        # 0 is BERT's trap: past max_steps lr is 0, so a --resume trains nothing.
+        assert 0.0 < self.min_lr_ratio <= 1.0, f"min_lr_ratio must be in (0, 1], got {self.min_lr_ratio}"
+        return self
+
+
 class Config(_Strict):
     data: DataConfig
     model: ModelConfig
+    training: TrainingConfig
+    optimizer: OptimizerConfig
     paths: PathsConfig
-    seed: int            # shuffles the articles before the train/val split
+    seed: int            # shuffles the articles before the train/val split; pretrain.py re-seeds every step from it
+    device: str          # "auto" → mps / cuda / cpu (common.run_utils.get_device)
 
     @classmethod
     def from_yaml(cls, path: str) -> "Config":
