@@ -1,0 +1,24 @@
+# GPT pre-training — pip fallback. Source of truth is pyproject.toml at the repo
+# root (`uv sync`); versions below mirror it. Python >= 3.12.
+#
+# GPT imports modules from transformer/, BERT/ and common/ unchanged (repo.txt lists
+# them), so clone the whole repo and run from its root: python -m GPT.scripts.<name>.
+# Those modules need nothing beyond the packages below.
+#
+#   pip install -r GPT/requirements.txt
+
+# --- Core: corpus → byte-level BPE → train.bin / val.bin → model ---
+torch>=2.12
+numpy==2.3.1              # uint16 token memmaps — utils/data_utils.py, scripts/prepare_data.py
+regex>=2026.4.4           # \p{L} / \p{M} in the GPT-2 pre-tokenizer; stdlib `re` has no \p{...} — bpe/pretokenize.py
+pydantic==2.12.4          # typed YAML configs — utils/config.py, utils/generate_config.py
+pyyaml>=6.0               # YAML loading — utils/config.py, utils/generate_config.py
+
+# --- Training / logging (scripts/pretrain.py) ---
+tensorboard>=2.20.0       # loss / lr / grad_norm curves → logs/
+tqdm==4.67.1              # progress bar — utils/train_utils.py
+
+# --- Source corpus (BERT/scripts/prepare_corpus.py) ---
+# GPT reuses BERT's corpus file, BERT/data/bn_wiki.txt. Only needed to build it yourself:
+#   python -m BERT.scripts.prepare_corpus BERT/configs/base.yaml
+datasets>=2.14.0          # streaming Bengali Wikipedia

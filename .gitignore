@@ -100,6 +100,8 @@ ViT/markdown_images/vit_patch_grid.jpg
 
 # gradio
 .gradio
+# GPT demo — local only: a 6.9M model's free-form text isn't worth showing
+GPT/scripts/app.py
 
 # Claude Code's guide
 CLAUDE.md

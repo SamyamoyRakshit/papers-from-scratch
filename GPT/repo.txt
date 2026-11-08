@@ -26,22 +26,30 @@
 #                                                                          takes the OTHER half of the same file)
 #   transformer/utils/config.py                  → _Strict                (pydantic base: extra="forbid", strict=True)
 #   BERT/utils/config.py                         → PathsConfig            (tokenizer_dir, checkpoint_dir, log_dir)
-#   BERT/models/modules/feed_forward.py          → gelu                   (tanh approx — GPT-2 uses the identical
+#                                                  + OptimizerConfig      (lr, betas, eps, weight_decay)
+#   BERT/utils/optimizer.py                      → _decay_groups          (1-D params — bias, LayerNorm — get no weight decay)
+#   BERT/utils/train_utils.py                    → set_seed               (random / numpy / torch)
+#   BERT/models/modules/feed_forward.py         → gelu                   (tanh approx — GPT-2 uses the identical
 #                                                                          formula; BERT §A.2 cites "following OpenAI GPT")
 #   common/run_utils.py                          → device, seed, git hash, sha256, logging, leaderboard
 #
 # NEW this replication (nothing to import — no sibling has these):
 #   - byte-level BPE, trained from scratch (GPT-2 §2.2). No sentencepiece, no HF `tokenizers`.
 #   - pre-LN blocks + 1/√(2N) residual init — the two things that make GPT-2 ≠ GPT-1.
-#   - a performance layer (SDPA, fp16 autocast, grad accum, memmap token stream). See docs/performance.md.
+#   - a performance layer: SDPA, grad accum, memmap token stream. See docs/performance.md.
+#     fp16 autocast and torch.compile were measured, not wired in: the base run is plain fp32.
 #     (fp16, NOT bf16 — bf16 has no native M1 kernel and measured 1.7× slower than fp32. See the table below.)
 #
 ├── README.md                        # Results + docs map + setup + full usage runbook
 ├── repo.txt                         # This annotated file tree
-├── requirements.txt                 # pip fallback (pyproject.toml at repo root is the source of truth)
+├── requirements.txt                 # pip fallback: GPT's third-party packages only, versions identical to
+│                                    #       pyproject.toml at repo root (the source of truth). In a clean venv
+│                                    #       it is enough: every script imports, generate.py runs. Still needs the
+│                                    #       whole repo — transformer/, BERT/, common/ are imported, not copied.
 │                                    # NOTE: adds `regex` (needed for \p{L} in the GPT-2 pre-tokenizer —
 │                                    #       stdlib `re` cannot do Unicode property classes). `tokenizers`
 │                                    #       and `sentencepiece` are NOT needed here: we train our own BPE.
+│                                    #       `datasets` only builds BERT's corpus file, which GPT reuses.
 ├── bpe/                             # [new] from-scratch byte-level BPE — GPT-2 §2.2 ("Input Representation")
 │   │                                #   Deliberately NOT named `tokenizer/`: .gitignore:64 has a bare
 │   │                                #   `tokenizer/` rule that would silently untrack this whole package.
@@ -106,7 +114,9 @@
 ├── utils/
 │   ├── __init__.py
 │   ├── config.py                    # [adapt] strict pydantic YAML config, repo-root-relative paths.
-│   │                                #         _Strict is [import]ed from transformer/, PathsConfig from BERT/, unchanged.
+│   │                                #         _Strict is [import]ed from transformer/, PathsConfig + OptimizerConfig
+│   │                                #         from BERT/, unchanged. TrainingConfig is new: grad_accum_steps,
+│   │                                #         max_steps, warmup_steps, and min_lr_ratio > 0 (BERT's resume trap).
 │   │                                #         block_size is ONE field: context length AND position-table
 │   │                                #         size. BERT had two (512 allocated, 128 trained) → 98,304
 │   │                                #         dead parameters. With one field they cannot differ.
@@ -115,23 +125,30 @@
 │   │                                #         y = t[i+1:i+T+1]. No Dataset/DataLoader, no per-epoch tokenizing,
 │   │                                #         no padding, no attention mask. (uint16 caps vocab at 65,536 — a
 │   │                                #         real limit on vocab_size, asserted when the config loads.)
-│   ├── loss.py                      # [adapt] next-token cross-entropy, logits[:, :-1] vs targets[:, 1:].
+│   ├── loss.py                      # [adapt] next-token cross-entropy at EVERY position. No shift inside:
+│   │                                #         get_batch already returns y = x shifted left by one.
 │   │                                #         One objective — vs BERT's joint MLM + NSP. Every token is a label,
 │   │                                #         which is why GPT gets more signal per sequence than BERT's 15%.
 │   ├── optimizer.py                 # [adapt] AdamW + linear warmup → COSINE decay to 10% of peak lr (GPT-3 §B;
-│   │                                #         GPT-2's own schedule is undocumented). Reuses BERT's decay-group
-│   │                                #         split (no weight decay on LayerNorm/bias/embeddings).
+│   │                                #         GPT-2's own schedule is undocumented). [import]s BERT's _decay_groups:
+│   │                                #         no weight decay on 1-D params (bias, LayerNorm); the 2-D embedding
+│   │                                #         table IS decayed.
 │   │                                #         ⚠ Trap already paid for in BERT: a schedule that decays to exactly
 │   │                                #           0 makes --resume train nothing. Cosine-to-10% is immune.
 │   ├── train_utils.py               # [adapt] train loop + checkpointing + leaderboard, plus GRADIENT ACCUMULATION —
-│   │                                #         the only way to reach GPT-2's ~0.5M-token batch on one M1. Steps in
-│   │                                #         tokens, not epochs (the corpus is a stream, not an example list).
-│   ├── sampling.py                  # [new]   generate(): autoregressive decode with temperature, top-k (the
-│   │                                #         paper's own samples use k=40) and top-p; crops the context to
-│   │                                #         block_size each step.
-│   └── perf.py                      # [new]   the M1 performance layer, isolated so it is documentable and
-│                                    #         switchable: autocast dtype pick, torch.compile gate, MFU estimate,
-│                                    #         tokens/sec. Deliberately NOT in common/ yet — one caller so far.
+│   │                                #         the only way to reach GPT-2's ~0.5M-token batch on one M1. Counts
+│   │                                #         optimizer steps, not epochs (the corpus is a stream, not an example list).
+│   │                                #         Re-seeds every step (seed + step), so --resume reproduces the
+│   │                                #         uninterrupted run; logs the pre-clip grad_norm; val = one full, fixed
+│   │                                #         pass over val.bin. set_seed is [import]ed from BERT/.
+│   ├── sampling.py                  # [new]   generate(): autoregressive decode with temperature (0 = greedy),
+│   │                                #         top-k (GPT-2's samples use k=40) and top-p; crops the context to
+│   │                                #         block_size each step, stops at <|endoftext|>. No KV cache. No
+│   │                                #         defaults: the values come from configs/generate.yaml.
+│   └── generate_config.py           # [new]   strict pydantic config for generate.yaml, with range checks. Separate
+│                                    #         from config.py: a new required section there would make every finished
+│                                    #         run's config.yaml snapshot fail to load. Same split as BERT's
+│                                    #         finetune_config.py.
 ├── scripts/                         # all run from the repo root as modules: python -m GPT.scripts.<name>
 │   ├── _common.py                   # [adapt] shared model-build + weights_only checkpoint load
 │   ├── prepare_corpus.py            # [new]   BERT/data/bn_wiki.txt → GPT/data/bn_wiki.txt, <|endoftext|> after
@@ -143,27 +160,42 @@
 │   │                                #         compression ratio (bytes/token) — the tokenizer's real report card.
 │   │                                #         Splits by whole article like BERT (seed 42, 10%): val = BERT's
 │   │                                #         1,621 held-out articles. Measured: 9.81 / 9.75 bytes/token, 25 s.
-│   ├── pretrain.py                  # [adapt] THE run. --resume supported.
+│   ├── pretrain.py                  # [adapt] THE run. --resume supported; a bigger max_steps on resume keeps
+│   │                                #         the OLD cosine (LambdaLR restores it), so the extra steps run at the
+│   │                                #         10% floor — GPT-3 §B's "training continues at 10%".
+│   │                                #         Measured (base): 1,700 steps × 65,536 tokens = 111M (≈10 passes of
+│   │                                #         train.bin), 4 h 15 m on mps, val loss 4.4166 at the last step.
 │   ├── evaluate.py                  # [adapt] held-out loss → perplexity AND bits-per-byte. bpb matters here:
 │   │                                #         perplexity is per-TOKEN, so it is not comparable across two
 │   │                                #         different tokenizers; bits-per-byte is, and GPT-2 Table 3 reports it.
-│   ├── generate.py                  # [new]   prompt → continuation (temperature / top-k / top-p flags)
-│   └── app.py                       # [new]   local Gradio demo — streaming text box, loads the model once
+│   │                                #         Data: val.bin. Checks train.bin's sha256 against the checkpoint, so
+│   │                                #         val.bin cannot overlap the training articles.
+│   │                                #         Measured (base, 48 s): 4.4166 nats/token, perplexity 82.8, 0.6545 bits/byte.
+│   └── generate.py                  # [new]   prompt → continuation. Flags: --prompt, --checkpoint, --config; the
+│                                    #         sampling knobs live in configs/generate.yaml. load_model() is shared
+│                                    #         with evaluate.py. Samples: fluent Wikipedia-style Bengali, invented
+│                                    #         facts; greedy loops ("ঠাকুর ঠাকুর …"), the degeneration Holtzman et al.
+│                                    #         2019 describe.
 ├── configs/
 │   ├── base.yaml                    # the actual run: paper METHOD, M1 scale — L=6, H=256, A=8, d_ff=1024,
 │   │                                #   block_size=256, vocab=8192. Mirrors BERT's L/H/A exactly so the two
 │   │                                #   replications are one controlled experiment on the same hardware budget.
 │   ├── tiny.yaml                    # L=2, H=64, vocab=1024 — pipeline smoke test in minutes
+│   ├── generate.yaml                # sampling for generate.py: max_new_tokens 200, temperature 1.0, top_k 40,
+│   │                                #   top_p off, num_samples 1, seed off. Not part of the training config.
 │   └── gpt2-124m.yaml               # REFERENCE ONLY — the paper's real 124M spec (L=12, H=768, A=12,
-│                                    #   block_size=1024, vocab=50257). Will OOM on 16 GB. Kept so the config
-│                                    #   dir states what is being scaled down FROM, and so the folder name
-│                                    #   `GPT/` pays off: the variant lives in configs, not in the path.
+│                                    #   block_size=1024, vocab=50257). Loads and builds: 124,439,808 params.
+│                                    #   Too big to train here (~400 tok/s extrapolated → ~20 years for GPT-3's
+│                                    #   260B-token schedule). Kept so the config dir states what is being
+│                                    #   scaled down FROM, and so the folder name `GPT/` pays off: the variant
+│                                    #   lives in configs, not in the path.
 ├── data/                            # corpus .txt + train.bin / val.bin — runtime, gitignored (.gitignore:50)
 ├── tokenizer/                       # trained BPE artifacts (base/, tiny/) — runtime, gitignored (.gitignore:64)
 ├── checkpoints/                     # run_<ts>/ (best.pt, last.pt, config.yaml snapshot) + leaderboard.json
 │                                    #   + best.pt symlink — runtime, gitignored. Same convention as BERT:
-│                                    #   evaluate/generate take only --checkpoint and read the sibling snapshot.
-├── logs/                            # TensorBoard event files — runtime, gitignored
+│                                    #   evaluate/generate rebuild the model from the sibling snapshot — no model
+│                                    #   --config flag.
+├── logs/                            # run_<ts>/: train.log + TensorBoard event files — runtime, gitignored
 └── docs/                            # standardized docs (Diátaxis; the "why" lives on the blog)
     ├── getting-started.md           # install + verify the whole pipeline on tiny.yaml
     ├── training.md                  # reproduce the result: corpus → BPE → .bin → pretrain → evaluate → generate
@@ -217,11 +249,11 @@
 #                                                             attention_impl=sdpa is the one config
 #                                                             that is both fast and safe here, and
 #                                                             it redeems transformer/'s dead end.
-#                                                             Still needs GradScaler, and still
-#                                                             unproven over a full run — gate it
-#                                                             behind config, keep a NaN guard, and
-#                                                             note that the `reference` attention
-#                                                             path MUST stay fp32.
+#                                                             NOT wired in: the base run is fp32.
+#                                                             Wiring it needs GradScaler, a NaN
+#                                                             guard, and the `reference` attention
+#                                                             path kept fp32 — and it is still
+#                                                             unproven over a full run.
 #   torch.compile                    ✅ large win          ❌ SLOWER. Measured on our exact config
 #                                                             (L=6, d=256, T=256, fwd+bwd+AdamW):
 #                                                             0.77-0.81x over three runs, i.e. ~25%
@@ -232,9 +264,8 @@
 #                                                             ones MPS ships. First compile cost
 #                                                             270 s. It does cut memory ~9% (2.33 vs
 #                                                             2.57 GB), so fusion is real, just not
-#                                                             profitable at d=256. Default OFF; keep
-#                                                             the config flag so the negative result
-#                                                             stays reproducible.
+#                                                             profitable at d=256. Not used, and no
+#                                                             config flag.
 #   gradient accumulation            ✅                    ✅ ESSENTIAL — the only route to a
 #                                                             0.5M-token batch on one device.
 #   memmap uint16 token stream       ✅                    ✅ Full win, device-independent.
@@ -249,6 +280,9 @@
 #   TF32 matmul precision            ✅                    ❌ CUDA-only. Silent no-op on MPS —
 #                                                             do not copy this line from nanoGPT.
 #   DDP / multi-GPU                  ✅ 8 GPUs             ❌ One device. Not applicable.
-#   fused AdamW (fused=True)         ✅                    ❌ CUDA-only → use foreach=True.
+#   fused AdamW (fused=True)         ✅                    ⚠️ NOT CUDA-only any more: fused=True
+#                                                             steps on MPS in torch 2.12. Speed not
+#                                                             measured; optimizer.py uses AdamW's
+#                                                             defaults.
 #   pin_memory / non_blocking=True   ✅                    ❌ No-op: MPS is unified memory, there
 #                                                             is no host→device copy to overlap.
