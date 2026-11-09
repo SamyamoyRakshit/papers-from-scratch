@@ -82,24 +82,29 @@ PUBLISHING.md
 
 # Verbose per-module docs — superseded by docs/{getting-started,training,architecture}.md.
 # The three standardized top-level docs/*.md stay tracked (only the subdirs are ignored).
-BERT/docs/architecture/
-BERT/docs/modules/
-BERT/docs/objectives/
-BERT/docs/scripts/
-BERT/docs/utils/
-transformer/docs/architecture/
-transformer/docs/modules/
-transformer/docs/scripts/
-transformer/docs/utils/
-common/docs/
+docs/
+!docs/architecture.md
+!docs/getting-started.md
+!docs/training.md
 
 # Doc/article figures. ViT/markdown_images/ is intentionally NOT ignored —
 # the tracked showcase notebook (ViT/ViT.ipynb) embeds those images.
 BERT/markdown_images/
 transformer/markdown_images/
+# GPT: only the val-loss curve is shipped (docs/training.md shows it).
+GPT/markdown_images/*
+!GPT/markdown_images/tb_val_loss.png
+
+# ...except the article-only figures: the ten temple photos are dataset images,
+# which stay private, and these two are built for the blog, not the notebook.
+ViT/markdown_images/temple_*.jpg
+ViT/markdown_images/bishnupur_asi_map.jpg
+ViT/markdown_images/vit_patch_grid.jpg
 
 # gradio
 .gradio
+# GPT local Gradio demo — not shipped
+GPT/scripts/app.py
 
 # Claude Code's guide
 CLAUDE.md

@@ -1,0 +1,272 @@
+.
+#
+# GPT — "Language Models are Unsupervised Multitask Learners" (Radford et al., 2019)
+# Decoder-only causal LM, pre-trained from scratch on Bengali, on one M1 (16 GB).
+#
+# Why the folder is `GPT/` and not `GPT2/`:
+#   GPT-3 is the SAME architecture ("We use the same model and architecture as GPT-2 …
+#   with the exception that we use alternating dense and locally banded sparse attention"),
+#   so the paper variant is a CONFIG, not a folder — configs/base.yaml names the model,
+#   the way minGPT does with `model_type` and nanoGPT with config/train_*.py.
+#   (`GPT-2/` is also unusable: `python -m GPT-2.scripts.pretrain` is a syntax error.)
+#
+# Reuse legend (relative to ../transformer/ and ../BERT/):
+#   [import] NOT a local file — imported directly from a sibling (zero changes, single source of truth)
+#   [tweak]  copied here with one small, paper-stated change
+#   [adapt]  reuse the pattern, rewrite the body for GPT
+#   [new]    GPT-specific, written from scratch
+#
+# Imported unchanged (run from repo root so `transformer` / `BERT` / `common` resolve as packages):
+#   transformer/models/modules/layer_norm.py     → LayerNorm              (arithmetic; identical in all three papers)
+#   transformer/models/modules/multi_head_attention.py → MultiHeadAttention
+#                                                  (the REFERENCE attention path — already accepts a
+#                                                   mask, so create_causal_mask alone makes it causal;
+#                                                   no code change needed to go from encoder to decoder)
+#   transformer/utils/mask_utils.py              → create_causal_mask     (BERT imported create_padding_mask; GPT
+#                                                                          takes the OTHER half of the same file)
+#   transformer/utils/config.py                  → _Strict                (pydantic base: extra="forbid", strict=True)
+#   BERT/utils/config.py                         → PathsConfig            (tokenizer_dir, checkpoint_dir, log_dir)
+#                                                  + OptimizerConfig      (lr, betas, eps, weight_decay)
+#   BERT/utils/optimizer.py                      → _decay_groups          (1-D params — bias, LayerNorm — get no weight decay)
+#   BERT/utils/train_utils.py                    → set_seed               (random / numpy / torch)
+#   BERT/models/modules/feed_forward.py         → gelu                   (tanh approx — GPT-2 uses the identical
+#                                                                          formula; BERT §A.2 cites "following OpenAI GPT")
+#   common/run_utils.py                          → device, seed, git hash, sha256, logging, leaderboard
+#
+# NEW this replication (nothing to import — no sibling has these):
+#   - byte-level BPE, trained from scratch (GPT-2 §2.2). No sentencepiece, no HF `tokenizers`.
+#   - pre-LN blocks + 1/√(2N) residual init — the two things that make GPT-2 ≠ GPT-1.
+#   - a performance layer: SDPA, grad accum, memmap token stream. See docs/performance.md.
+#     fp16 autocast and torch.compile were measured, not wired in: the base run is plain fp32.
+#     (fp16, NOT bf16 — bf16 has no native M1 kernel and measured 1.7× slower than fp32. See the table below.)
+#
+├── README.md                        # Results + docs map + setup + full usage runbook
+├── repo.txt                         # This annotated file tree
+├── requirements.txt                 # pip fallback: GPT's third-party packages only, versions identical to
+│                                    #       pyproject.toml at repo root (the source of truth). In a clean venv
+│                                    #       it is enough: every script imports, generate.py runs. Still needs the
+│                                    #       whole repo — transformer/, BERT/, common/ are imported, not copied.
+│                                    # NOTE: adds `regex` (needed for \p{L} in the GPT-2 pre-tokenizer —
+│                                    #       stdlib `re` cannot do Unicode property classes). `tokenizers`
+│                                    #       and `sentencepiece` are NOT needed here: we train our own BPE.
+│                                    #       `datasets` only builds BERT's corpus file, which GPT reuses.
+├── bpe/                             # [new] from-scratch byte-level BPE — GPT-2 §2.2 ("Input Representation")
+│   │                                #   Deliberately NOT named `tokenizer/`: .gitignore:64 has a bare
+│   │                                #   `tokenizer/` rule that would silently untrack this whole package.
+│   │                                #   That name stays for the files train_tokenizer.py writes, as in BERT/.
+│   ├── __init__.py
+│   ├── pretokenize.py               # [new] GPT-2's regex split, fixed for Bengali:
+│   │                                #       ` ?[\p{L}\p{M}\u200c\u200d]+ | ?\p{N}+ | ?[^\s\p{L}\p{M}\p{N}\u200c\u200d]+ | \s+(?!\S) | \s+`
+│   │                                #         1. ADD \p{M}: vowel signs, hasanta, nukta are Unicode MARKS, not
+│   │                                #            letters, so GPT-2's ` ?\p{L}+` cuts every word at them
+│   │                                #            (কলকাতায় → কলক|া|ত|া|য|়). Full bn_wiki: 31.0M chunks → 8.1M.
+│   │                                #         2. DROP the English contractions ('s|'t|'re|'ve|'m|'ll|'d) — they
+│   │                                #            never fire on Bengali (only 0.3 s of the 9.0 s → 2.5 s speedup)
+│   │                                #         3. ADD ZWNJ/ZWJ (\u200c\u200d, Cf): Bengali puts them inside words (উদ্‌যাপন)
+│   │                                #            to control hasanta rendering; without them 0.17% of words split in 3 (→ 8.06M)
+│   ├── byte_coder.py                # [new] GPT-2's bytes_to_unicode() — the 256→printable-codepoint map that
+│   │                                #       keeps vocab files human-readable and dodges control chars
+│   └── bpe.py                       # [new] the merge loop: train(corpus, vocab_size) → merges + vocab;
+│                                    #       encode / decode / save / load. Byte-level ⇒ zero <unk>, ever.
+│                                    #   ⚠ The Bengali finding to write up: UTF-8 gives Latin 1 byte/char but
+│                                    #     Bengali (U+0980–U+09FF) 3 bytes/char, so a byte-level BPE starts ~3×
+│                                    #     worse on Bengali and needs far more merges to break even. This is the
+│                                    #     single most interesting measurement in the replication.
+│                                    #     Measured at vocab 8192: 9.81 bytes/token, 3.79 chars/token.
+├── models/
+│   ├── __init__.py
+│   ├── gpt.py                       # [new]   full model: embeddings → N blocks → FINAL LayerNorm → tied LM head.
+│   │                                #         The final LN is GPT-2 §2.3 ("an additional layer normalization was
+│   │                                #         added after the final self-attention block") — GPT-1 has no such LN.
+│   │                                #         Owns the init sweep: normal(0, 0.02) everywhere, then residual
+│   │                                #         output projections rescaled to 0.02/√(2N) (§2.3), and weight tying.
+│   │                                #         NOTE: no bert.py/heads.py/bert_for_pretraining.py three-way split —
+│   │                                #         GPT has exactly ONE head and it is tied to wte. Splitting would be
+│   │                                #         ceremony, not structure.
+│   ├── decoder.py                   # [tweak] from transformer/models/decoder.py, two paper-stated changes:
+│   │                                #           1. DROP cross-attention + norm2 (no encoder to attend to)
+│   │                                #           2. post-LN → PRE-LN: x = x + attn(ln1(x)); x = x + mlp(ln2(x))
+│   │                                #         (2) is THE GPT-1 → GPT-2 architectural change and the reason deep
+│   │                                #         stacks train without a warmup-dependent loss spike.
+│   └── modules/
+│       ├── __init__.py
+│       ├── embeddings.py            # [new]   wte + wpe, summed + dropout. vs the two siblings:
+│       │                            #           no ×√d_model  (transformer/ has it, GPT-2 does not)
+│       │                            #           no sinusoidal PE, no segment table (BERT's 3-way sum → 2-way here)
+│       │                            #           no LayerNorm after the sum (BERT has one; GPT-2 does not — its
+│       │                            #           first LN is ln1 inside block 0, a consequence of pre-LN)
+│       ├── causal_self_attention.py # [tweak] from transformer's MultiHeadAttention, for speed + fidelity:
+│       │                            #           - fused QKV: one Linear(d, 3d) `c_attn` instead of three W_q/W_k/W_v
+│       │                            #             (matches OpenAI's checkpoint layout AND is one matmul, not three)
+│       │                            #           - F.scaled_dot_product_attention(is_causal=True) — runs on MPS,
+│       │                            #             torch 2.12. NOT FlashAttention: memory is still O(T²) here
+│       │                            #             (measured). It saves the explicit mask tensor and some
+│       │                            #             intermediates — a constant factor, not an asymptotic win.
+│       │                            #         Config flag `model.attention_impl: sdpa | reference` swaps in the
+│       │                            #         imported transformer MHA + create_causal_mask. Keeping both is the
+│       │                            #         proof the fast path is honest: same weights, outputs equal to ~1e-6.
+│       └── feed_forward.py          # [tweak] GPT-2's MLP: c_fc(d→4d) → gelu → c_proj(4d→d) → dropout.
+│                                    #         `gelu` itself is [import]ed from BERT (identical tanh formula);
+│                                    #         only the DROPOUT PLACEMENT differs — BERT drops between the two
+│                                    #         linears, GPT-2 drops after c_proj. Small, but it is a real diff,
+│                                    #         so it gets a local file rather than a silent import.
+├── utils/
+│   ├── __init__.py
+│   ├── config.py                    # [adapt] strict pydantic YAML config, repo-root-relative paths.
+│   │                                #         _Strict is [import]ed from transformer/, PathsConfig + OptimizerConfig
+│   │                                #         from BERT/, unchanged. TrainingConfig is new: grad_accum_steps,
+│   │                                #         max_steps, warmup_steps, and min_lr_ratio > 0 (BERT's resume trap).
+│   │                                #         block_size is ONE field: context length AND position-table
+│   │                                #         size. BERT had two (512 allocated, 128 trained) → 98,304
+│   │                                #         dead parameters. With one field they cannot differ.
+│   ├── data_utils.py                # [new]   nanoGPT-style memmap stream: train.bin / val.bin of uint16 token
+│   │                                #         ids; a batch is B random offsets into the memmap, x = t[i:i+T],
+│   │                                #         y = t[i+1:i+T+1]. No Dataset/DataLoader, no per-epoch tokenizing,
+│   │                                #         no padding, no attention mask. (uint16 caps vocab at 65,536 — a
+│   │                                #         real limit on vocab_size, asserted when the config loads.)
+│   ├── loss.py                      # [adapt] next-token cross-entropy at EVERY position. No shift inside:
+│   │                                #         get_batch already returns y = x shifted left by one.
+│   │                                #         One objective — vs BERT's joint MLM + NSP. Every token is a label,
+│   │                                #         which is why GPT gets more signal per sequence than BERT's 15%.
+│   ├── optimizer.py                 # [adapt] AdamW + linear warmup → COSINE decay to 10% of peak lr (GPT-3 §B;
+│   │                                #         GPT-2's own schedule is undocumented). [import]s BERT's _decay_groups:
+│   │                                #         no weight decay on 1-D params (bias, LayerNorm); the 2-D embedding
+│   │                                #         table IS decayed.
+│   │                                #         ⚠ Trap already paid for in BERT: a schedule that decays to exactly
+│   │                                #           0 makes --resume train nothing. Cosine-to-10% is immune.
+│   ├── train_utils.py               # [adapt] train loop + checkpointing + leaderboard, plus GRADIENT ACCUMULATION —
+│   │                                #         the only way to reach GPT-2's ~0.5M-token batch on one M1. Counts
+│   │                                #         optimizer steps, not epochs (the corpus is a stream, not an example list).
+│   │                                #         Re-seeds every step (seed + step), so --resume reproduces the
+│   │                                #         uninterrupted run; logs the pre-clip grad_norm; val = one full, fixed
+│   │                                #         pass over val.bin. set_seed is [import]ed from BERT/.
+│   ├── sampling.py                  # [new]   generate(): autoregressive decode with temperature (0 = greedy),
+│   │                                #         top-k (GPT-2's samples use k=40) and top-p; crops the context to
+│   │                                #         block_size each step, stops at <|endoftext|>. No KV cache. No
+│   │                                #         defaults: the values come from configs/generate.yaml.
+│   └── generate_config.py           # [new]   strict pydantic config for generate.yaml, with range checks. Separate
+│                                    #         from config.py: a new required section there would make every finished
+│                                    #         run's config.yaml snapshot fail to load. Same split as BERT's
+│                                    #         finetune_config.py.
+├── scripts/                         # all run from the repo root as modules: python -m GPT.scripts.<name>
+│   ├── _common.py                   # [adapt] shared model-build + weights_only checkpoint load
+│   ├── prepare_corpus.py            # [new]   BERT/data/bn_wiki.txt → GPT/data/bn_wiki.txt, <|endoftext|> after
+│   │                                #         each article. Reuses BERT's file on purpose: same text, same laptop,
+│   │                                #         encoder vs decoder. No download; paragraph newlines are lost.
+│   ├── train_tokenizer.py           # [new]   corpus .txt → BPE merges + vocab. Separate step because training
+│   │                                #         the merges is slow and you must not redo it to re-binarise.
+│   ├── prepare_data.py              # [new]   corpus .txt --(BPE)--> train.bin / val.bin (uint16). Reports the
+│   │                                #         compression ratio (bytes/token) — the tokenizer's real report card.
+│   │                                #         Splits by whole article like BERT (seed 42, 10%): val = BERT's
+│   │                                #         1,621 held-out articles. Measured: 9.81 / 9.75 bytes/token, 25 s.
+│   ├── pretrain.py                  # [adapt] THE run. --resume supported; a bigger max_steps on resume keeps
+│   │                                #         the OLD cosine (LambdaLR restores it), so the extra steps run at the
+│   │                                #         10% floor — GPT-3 §B's "training continues at 10%".
+│   │                                #         Measured (base): 1,700 steps × 65,536 tokens = 111M (≈10 passes of
+│   │                                #         train.bin), 4 h 15 m on mps, val loss 4.4166 at the last step.
+│   ├── evaluate.py                  # [adapt] held-out loss → perplexity AND bits-per-byte. bpb matters here:
+│   │                                #         perplexity is per-TOKEN, so it is not comparable across two
+│   │                                #         different tokenizers; bits-per-byte is, and GPT-2 Table 3 reports it.
+│   │                                #         Data: val.bin. Checks train.bin's sha256 against the checkpoint, so
+│   │                                #         val.bin cannot overlap the training articles.
+│   │                                #         Measured (base, 48 s): 4.4166 nats/token, perplexity 82.8, 0.6545 bits/byte.
+│   └── generate.py                  # [new]   prompt → continuation. Flags: --prompt, --checkpoint, --config; the
+│                                    #         sampling knobs live in configs/generate.yaml. load_model() is shared
+│                                    #         with evaluate.py. Samples: fluent Wikipedia-style Bengali, invented
+│                                    #         facts; greedy loops ("ঠাকুর ঠাকুর …"), the degeneration Holtzman et al.
+│                                    #         2019 describe.
+├── configs/
+│   ├── base.yaml                    # the actual run: paper METHOD, M1 scale — L=6, H=256, A=8, d_ff=1024,
+│   │                                #   block_size=256, vocab=8192. Mirrors BERT's L/H/A exactly so the two
+│   │                                #   replications are one controlled experiment on the same hardware budget.
+│   ├── tiny.yaml                    # L=2, H=64, vocab=1024 — pipeline smoke test in minutes
+│   ├── generate.yaml                # sampling for generate.py: max_new_tokens 200, temperature 1.0, top_k 40,
+│   │                                #   top_p off, num_samples 1, seed off. Not part of the training config.
+│   └── gpt2-124m.yaml               # REFERENCE ONLY — the paper's real 124M spec (L=12, H=768, A=12,
+│                                    #   block_size=1024, vocab=50257). Loads and builds: 124,439,808 params.
+│                                    #   Too big to train here (~400 tok/s extrapolated → ~20 years for GPT-3's
+│                                    #   260B-token schedule). Kept so the config dir states what is being
+│                                    #   scaled down FROM, and so the folder name `GPT/` pays off: the variant
+│                                    #   lives in configs, not in the path.
+├── markdown_images/
+│   └── tb_val_loss.png              # val loss at each of the base run's 17 evals (TensorBoard), shown in docs/training.md
+└── docs/                            # standardized docs (Diátaxis; the "why" lives on the blog)
+    ├── getting-started.md           # install + verify the whole pipeline on tiny.yaml (~35 s)
+    ├── training.md                  # reproduce the result: corpus → BPE → .bin → pretrain → evaluate → generate
+    ├── architecture.md              # model spec, config field reference, checkpoint layout
+    └── performance.md               # ★ what Karpathy uses on 8×A100 vs what actually works on MPS (table below)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Performance: build-nanoGPT's techniques, filtered through MPS (torch 2.12)
+# ─────────────────────────────────────────────────────────────────────────────
+#   technique                        Karpathy (8×A100)     here (M1, mps)
+#   ───────────────────────────────  ────────────────────  ────────────────────────────────────
+#   flash attention                  FlashAttention-2      ❌ NOT AVAILABLE. flash-attn is CUDA-
+#                                    CUDA kernel              only. `F.scaled_dot_product_attention`
+#                                                             does run on MPS, but MEASURED on this
+#                                                             machine it is still O(T²) in memory:
+#                                                             B=8,H=8,D=64 → T=2048 uses 4.97 GB vs
+#                                                             7.12 GB hand-rolled; T=4096 thrashes
+#                                                             (14 GB, 10.9 s); T=8192 OOMs. Real
+#                                                             flash attention is O(T) and would not
+#                                                             flinch. SDPA saved memory only at
+#                                                             T=2048 (~30%); at T=512/1024 it saved
+#                                                             nothing and ran ~5% slower. We use it
+#                                                             for the fp16 safety below and the free
+#                                                             Flash path on CUDA — not for speed at
+#                                                             block_size=256.
+#   bf16 autocast                    ✅                    ❌ SLOWER THAN fp32 ON M1. Measured:
+#                                                             4096² matmul, fp32 83 ms, bf16 140 ms
+#                                                             (1.7× WORSE). M1's GPU has no native
+#                                                             bf16 — that lands with M2/M3 — so it
+#                                                             is emulated. Not an autocast artifact;
+#                                                             the raw kernel is slow. Do not use.
+#   fp16 autocast                    (bf16 preferred)      ⚠️ FASTEST option here: fp16 matmul 67 ms
+#                                                             vs fp32 83 ms (1.24×). The catch is
+#                                                             transformer/'s epoch-4 NaN — QKᵀ
+#                                                             overflows fp16's 65504 ceiling before
+#                                                             the softmax (measured: 115200).
+#                                                             BUT SDPA SURVIVES IT. Measured: at a
+#                                                             magnitude where raw QKᵀ = inf and the
+#                                                             hand-rolled path NaNs, SDPA returns
+#                                                             clean values — it folds 1/√d in before
+#                                                             the matmul instead of after. So fp16 +
+#                                                             attention_impl=sdpa is the one config
+#                                                             that is both fast and safe here, and
+#                                                             it redeems transformer/'s dead end.
+#                                                             NOT wired in: the base run is fp32.
+#                                                             Wiring it needs GradScaler, a NaN
+#                                                             guard, and the `reference` attention
+#                                                             path kept fp32 — and it is still
+#                                                             unproven over a full run.
+#   torch.compile                    ✅ large win          ❌ SLOWER. Measured on our exact config
+#                                                             (L=6, d=256, T=256, fwd+bwd+AdamW):
+#                                                             0.77-0.81x over three runs, i.e. ~25%
+#                                                             LESS throughput. Not flaky — it
+#                                                             compiles and the numerics are clean
+#                                                             (absdiff 1.9e-6) — the Metal kernels
+#                                                             inductor emits are just worse than the
+#                                                             ones MPS ships. First compile cost
+#                                                             270 s. It does cut memory ~9% (2.33 vs
+#                                                             2.57 GB), so fusion is real, just not
+#                                                             profitable at d=256. Not used, and no
+#                                                             config flag.
+#   gradient accumulation            ✅                    ✅ ESSENTIAL — the only route to a
+#                                                             0.5M-token batch on one device.
+#   memmap uint16 token stream       ✅                    ✅ Full win, device-independent.
+#   weight tying (wte ↔ lm_head)     ✅                    ✅ Paper-mandated; at vocab 8192 the
+#                                                             table is 2.1M of ~6.9M params (~30%).
+#   vocab padded to a multiple of 64 ✅ (50257→50304)      ❌ NO MEASURED GAIN ON M1. LM-head
+#                                                             matmul fwd+bwd: 8191/8192/8193/8256
+#                                                             and 50257/50304 all within noise,
+#                                                             fp32 and fp16. 8192 kept anyway: free,
+#                                                             and the right shape on CUDA.
+#   TF32 matmul precision            ✅                    ❌ CUDA-only. Silent no-op on MPS —
+#                                                             do not copy this line from nanoGPT.
+#   DDP / multi-GPU                  ✅ 8 GPUs             ❌ One device. Not applicable.
+#   fused AdamW (fused=True)         ✅                    ⚠️ NOT CUDA-only any more: fused=True
+#                                                             steps on MPS in torch 2.12. Speed not
+#                                                             measured; optimizer.py uses AdamW's
+#                                                             defaults.
+#   pin_memory / non_blocking=True   ✅                    ❌ No-op: MPS is unified memory, there
+#                                                             is no host→device copy to overlap.

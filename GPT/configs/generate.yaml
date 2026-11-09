@@ -1,0 +1,14 @@
+# ===========================================================
+# GPT sampling — read by scripts/generate.py
+# ===========================================================
+# Separate from base.yaml: the model is rebuilt from the config.yaml snapshot
+# beside best.pt; these only change how tokens are drawn from it.
+# The prompt and the checkpoint are CLI flags (--prompt, --checkpoint).
+# ===========================================================
+
+max_new_tokens: 200     # ~3.8 Bengali chars per token → ~760 chars
+temperature: 1.0        # logits / T: < 1 safer, > 1 more random. 0 = greedy → loops ("ঠাকুর ঠাকুর ঠাকুর …")
+top_k: 40               # GPT-2's samples use k = 40 (Fan et al. 2018). null = off
+top_p: null             # nucleus sampling (Holtzman et al. 2019), e.g. 0.9. null = off
+num_samples: 1          # independent continuations of the same prompt
+seed: null              # e.g. 42 → the same samples every run; null → different each run

@@ -1,0 +1,58 @@
+# ===========================================================
+# GPT-2 Configuration — Adapted for Apple M1 (16GB)
+# Based on "Language Models are Unsupervised Multitask Learners"
+# (Radford et al., 2019)
+# ===========================================================
+#
+# DATA DEVIATION FROM PAPER:
+#   Paper:  WebText — 40 GB of English from ~8M Reddit-linked pages, §2.1
+#   Ours:   BERT/'s Bengali Wikipedia corpus (20231101.bn, first 20k
+#           articles, filtered), reused as is — encoder and decoder
+#           are trained on the same text.
+# ===========================================================
+
+# --- Data ---
+data:
+  source_path: "BERT/data/bn_wiki.txt"   # written by BERT/scripts/prepare_corpus.py with BERT/configs/base.yaml
+  corpus_path: "GPT/data/bn_wiki.txt"    # prepare_corpus.py writes here; train_tokenizer.py + prepare_data.py read it
+  vocab_size: 8192                       # Paper: 50,257, §2.3. 2^13 = 256 bytes + 7,935 merges + <|endoftext|>; near BERT's 10k, a multiple of 64
+  train_path: "GPT/data/train.bin"       # prepare_data.py writes uint16 ids here
+  val_path: "GPT/data/val.bin"
+  val_split: 0.1                         # Same as BERT/configs/base.yaml: with seed 42 val is BERT's 1,621 held-out articles
+
+# --- Model (GPT-2 §2.3 "largely follows" GPT-1 §4.1) ---
+model:
+  num_layers: 6           # Paper: 12 (GPT-2 Table 2, smallest) — reduced for M1, same as BERT/configs/base.yaml
+  d_model: 256            # Paper: 768 — same as BERT
+  num_heads: 8            # Paper: 12 (GPT-1 §4.1) — 256/8 = 32 per head, same as BERT
+  d_ff: 1024              # Paper: 3072 = 4·H (GPT-1 §4.1) — kept 4·d_model
+  block_size: 256         # Paper: 1024, GPT-2 §2.3 (GPT-1: 512) — attention memory is O(T²) on MPS
+  dropout: 0.1            # GPT-2 doesn't state it; GPT-1 §4.1: 0.1 on residual, embedding, attention
+  attention_impl: "sdpa"  # "reference" only for the equality check against transformer/'s MHA
+  init_std: 0.02          # GPT-1 §4.1: "a simple weight initialization of N(0, 0.02) was sufficient"
+
+# --- Training (GPT-2 §2.3 gives only the batch, 512 × 1024 tokens; the rest is GPT-3 Appendix B) ---
+training:
+  batch_size: 32          # sequences per forward pass: 32 × 256 = 8,192 tokens, fits M1 memory
+  grad_accum_steps: 8     # → 65,536 tokens per step. Paper: 524,288 = only 21 steps per pass of train.bin
+  max_steps: 1700         # ≈ 10 passes of train.bin (11.0M tokens), BERT/configs/base.yaml's 10 epochs
+  warmup_steps: 100       # GPT-3 §B: 375M tokens, more than this whole run; here ~6% of it
+  min_lr_ratio: 0.1       # GPT-3 §B: cosine "down to 10% of its value", then held there
+  clip_grad_norm: 1.0     # GPT-3 §B: "clip the global norm of the gradient at 1.0"
+  eval_interval: 100      # steps between full val passes + checkpoints
+
+# --- Optimizer (GPT-2 states none, §3 only "manually tuned"; values from GPT-3 Appendix B) ---
+optimizer:
+  lr: 6.0e-4              # GPT-3 Table 2.1 (Small, 125M). Written 6.0e-4: PyYAML reads 6e-4 as a string
+  betas: [0.9, 0.95]      # GPT-3 §B: β₂ 0.95, not BERT's 0.999
+  eps: 1.0e-8             # GPT-3 §B
+  weight_decay: 0.1       # GPT-3 §B (GPT-1 §4.1: 0.01). None on biases / LayerNorm (_decay_groups)
+
+# --- Paths ---
+paths:
+  tokenizer_dir: "GPT/tokenizer/base/"     # train_tokenizer.py writes vocab.json + merges.txt here
+  checkpoint_dir: "GPT/checkpoints/base/"
+  log_dir: "GPT/logs/base/"
+
+seed: 42
+device: "auto"        # "auto" → MPS/CUDA if available, else CPU. Options: "auto", "mps", "cpu", "cuda"

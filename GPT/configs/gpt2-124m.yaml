@@ -1,0 +1,62 @@
+# ===========================================================
+# GPT-2 124M — REFERENCE ONLY, not meant to run on the M1
+# "Language Models are Unsupervised Multitask Learners" (Radford et al., 2019)
+# ===========================================================
+#
+# What base.yaml scales DOWN from. It loads with Config.from_yaml and builds
+# (124,439,808 params, 18× base), so the numbers below are checked, not just written.
+#
+# Why it can't run here:
+#   - 4× the context: attention memory is O(T²) on MPS (repo.txt, flash attention row)
+#   - throughput: base trains at ~7,300 tok/s; FLOPs scale with params, so ~400 tok/s
+#     at 124M (extrapolated, not measured) → GPT-3's 260B-token schedule ≈ 20 years
+#
+# Paths are its own so a stray run never overwrites base's tokenizer or .bin files.
+# ===========================================================
+
+# --- Data ---
+data:
+  source_path: "BERT/data/bn_wiki.txt"
+  corpus_path: "GPT/data/bn_wiki.txt"
+  vocab_size: 50257                          # GPT-2 §2.3: 256 bytes + 50,000 merges + <|endoftext|>
+  train_path: "GPT/data/train_gpt2-124m.bin"
+  val_path: "GPT/data/val_gpt2-124m.bin"
+  val_split: 0.1                             # ours; WebText's split is not stated
+
+# --- Model (GPT-2 Table 2, smallest; §2.3) ---
+model:
+  num_layers: 12          # GPT-2 Table 2
+  d_model: 768            # GPT-2 Table 2
+  num_heads: 12           # GPT-1 §4.1: "12 attention heads"; 768/12 = 64 per head
+  d_ff: 3072              # GPT-1 §4.1: 4·d_model
+  block_size: 1024        # GPT-2 §2.3: "increase the context size from 512 to 1024 tokens"
+  dropout: 0.1            # GPT-2 doesn't state it; GPT-1 §4.1: 0.1
+  attention_impl: "sdpa"
+  init_std: 0.02          # GPT-1 §4.1: N(0, 0.02)
+
+# --- Training (GPT-2 §2.3 gives only the batch; the schedule is GPT-3 Appendix B) ---
+training:
+  batch_size: 16          # 16 × 32 = 512 sequences, GPT-2 §2.3: "a larger batchsize of 512 is used".
+  grad_accum_steps: 32    #   How the 512 splits is a memory choice → 524,288 tokens per step
+  max_steps: 495911       # GPT-3 §B: cosine to 10% "over 260 billion tokens" = 260e9 / 524,288.
+                          #   GPT-3 then "continues at 10%" to 300B: --resume with max_steps 572205
+  warmup_steps: 715       # GPT-3 §B: "linear LR warmup over the first 375 million tokens" = 375e6 / 524,288
+  min_lr_ratio: 0.1       # GPT-3 §B: "down to 10% of its value"
+  clip_grad_norm: 1.0     # GPT-3 §B
+  eval_interval: 1000     # not from the paper
+
+# --- Optimizer (GPT-3 Table 2.1, Small 125M, and Appendix B) ---
+optimizer:
+  lr: 6.0e-4              # GPT-3 Table 2.1 (Small)
+  betas: [0.9, 0.95]      # GPT-3 §B
+  eps: 1.0e-8             # GPT-3 §B
+  weight_decay: 0.1       # GPT-3 §B
+
+# --- Paths ---
+paths:
+  tokenizer_dir: "GPT/tokenizer/gpt2-124m/"
+  checkpoint_dir: "GPT/checkpoints/gpt2-124m/"
+  log_dir: "GPT/logs/gpt2-124m/"
+
+seed: 42
+device: "auto"

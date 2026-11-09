@@ -80,6 +80,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "gradio>=6.15.2",
     "tokenizers>=0.23.1",
+    "regex>=2026.4.4",
 ]
 readme = { file = "README.md", content-type = "text/markdown" }
 

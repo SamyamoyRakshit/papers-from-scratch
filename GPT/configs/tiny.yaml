@@ -1,0 +1,49 @@
+# ===========================================================
+# GPT tiny config — pipeline smoke test, every step in minutes
+# ===========================================================
+
+# --- Data ---
+data:
+  source_path: "BERT/data/bn_wiki_tiny.txt"   # written by BERT/scripts/prepare_corpus.py with BERT/configs/tiny.yaml
+  corpus_path: "GPT/data/bn_wiki_tiny.txt"    # tiny corpus for pipeline checks
+  vocab_size: 1024                            # 256 bytes + 767 merges + <|endoftext|>
+  train_path: "GPT/data/train_tiny.bin"
+  val_path: "GPT/data/val_tiny.bin"
+  val_split: 0.1
+
+# --- Model ---
+model:
+  num_layers: 2
+  d_model: 64
+  num_heads: 4            # 64/4 = 16 per head
+  d_ff: 256               # 4·d_model
+  block_size: 64
+  dropout: 0.1
+  attention_impl: "sdpa"
+  init_std: 0.02
+
+# --- Training ---
+training:
+  batch_size: 16
+  grad_accum_steps: 2     # 16 · 2 · 64 = 2,048 tokens per step
+  max_steps: 200
+  warmup_steps: 20
+  min_lr_ratio: 0.1
+  clip_grad_norm: 1.0
+  eval_interval: 50
+
+# --- Optimizer ---
+optimizer:
+  lr: 6.0e-4
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  weight_decay: 0.1
+
+# --- Paths ---
+paths:
+  tokenizer_dir: "GPT/tokenizer/tiny/"     # train_tokenizer.py writes vocab.json + merges.txt here
+  checkpoint_dir: "GPT/checkpoints/tiny/"
+  log_dir: "GPT/logs/tiny/"
+
+seed: 42
+device: "auto"        # "auto" → MPS/CUDA if available, else CPU. Options: "auto", "mps", "cpu", "cuda"
