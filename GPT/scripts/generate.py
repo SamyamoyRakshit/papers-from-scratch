@@ -35,8 +35,8 @@ logger = logging.getLogger(__name__)
 
 def load_model(checkpoint_arg):
     """
-    Resolve a best.pt into a ready-to-sample model. Shared with app.py — call once,
-    then generate() per prompt.
+    Resolve a best.pt into a ready-to-sample model. Shared with evaluate.py — call
+    once, then generate() per prompt.
 
     Returns:
         model:     GPT on `device`, weights loaded, eval mode.

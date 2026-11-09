@@ -1,5 +1,5 @@
 """
-Shared builders for GPT scripts (pretrain, evaluate, generate, app).
+Shared builders for GPT scripts (pretrain, evaluate, generate).
 
 Only factor out what's genuinely reused across scripts — anything single-use
 stays inline in its caller.

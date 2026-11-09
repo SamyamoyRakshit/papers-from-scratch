@@ -91,6 +91,9 @@ docs/
 # the tracked showcase notebook (ViT/ViT.ipynb) embeds those images.
 BERT/markdown_images/
 transformer/markdown_images/
+# GPT: only the val-loss curve is shipped (docs/training.md shows it).
+GPT/markdown_images/*
+!GPT/markdown_images/tb_val_loss.png
 
 # ...except the article-only figures: the ten temple photos are dataset images,
 # which stay private, and these two are built for the blog, not the notebook.
@@ -100,7 +103,7 @@ ViT/markdown_images/vit_patch_grid.jpg
 
 # gradio
 .gradio
-# GPT demo — local only: a 6.9M model's free-form text isn't worth showing
+# GPT local Gradio demo — not shipped
 GPT/scripts/app.py
 
 # Claude Code's guide

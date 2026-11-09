@@ -53,7 +53,7 @@
 ├── bpe/                             # [new] from-scratch byte-level BPE — GPT-2 §2.2 ("Input Representation")
 │   │                                #   Deliberately NOT named `tokenizer/`: .gitignore:64 has a bare
 │   │                                #   `tokenizer/` rule that would silently untrack this whole package.
-│   │                                #   `tokenizer/` below stays the RUNTIME artifact dir, as in BERT/.
+│   │                                #   That name stays for the files train_tokenizer.py writes, as in BERT/.
 │   ├── __init__.py
 │   ├── pretokenize.py               # [new] GPT-2's regex split, fixed for Bengali:
 │   │                                #       ` ?[\p{L}\p{M}\u200c\u200d]+ | ?\p{N}+ | ?[^\s\p{L}\p{M}\p{N}\u200c\u200d]+ | \s+(?!\S) | \s+`
@@ -72,8 +72,7 @@
 │                                    #     Bengali (U+0980–U+09FF) 3 bytes/char, so a byte-level BPE starts ~3×
 │                                    #     worse on Bengali and needs far more merges to break even. This is the
 │                                    #     single most interesting measurement in the replication.
-│                                    #     Measured at vocab 8192: 9.81 bytes/token, 3.79 chars/token
-│                                    #     (docs/scripts/train_tokenizer.md §5).
+│                                    #     Measured at vocab 8192: 9.81 bytes/token, 3.79 chars/token.
 ├── models/
 │   ├── __init__.py
 │   ├── gpt.py                       # [new]   full model: embeddings → N blocks → FINAL LayerNorm → tied LM head.
@@ -189,27 +188,13 @@
 │                                    #   260B-token schedule). Kept so the config dir states what is being
 │                                    #   scaled down FROM, and so the folder name `GPT/` pays off: the variant
 │                                    #   lives in configs, not in the path.
-├── data/                            # corpus .txt + train.bin / val.bin — runtime, gitignored (.gitignore:50)
-├── tokenizer/                       # trained BPE artifacts (base/, tiny/) — runtime, gitignored (.gitignore:64)
-├── checkpoints/                     # run_<ts>/ (best.pt, last.pt, config.yaml snapshot) + leaderboard.json
-│                                    #   + best.pt symlink — runtime, gitignored. Same convention as BERT:
-│                                    #   evaluate/generate rebuild the model from the sibling snapshot — no model
-│                                    #   --config flag.
-├── logs/                            # run_<ts>/: train.log + TensorBoard event files — runtime, gitignored
+├── markdown_images/
+│   └── tb_val_loss.png              # val loss at each of the base run's 17 evals (TensorBoard), shown in docs/training.md
 └── docs/                            # standardized docs (Diátaxis; the "why" lives on the blog)
-    ├── getting-started.md           # install + verify the whole pipeline on tiny.yaml
+    ├── getting-started.md           # install + verify the whole pipeline on tiny.yaml (~35 s)
     ├── training.md                  # reproduce the result: corpus → BPE → .bin → pretrain → evaluate → generate
     ├── architecture.md              # model spec, config field reference, checkpoint layout
-    ├── performance.md               # ★ what Karpathy uses on 8×A100 vs what actually works on MPS (table below)
-    ├── bpe/                         # pretokenize.md · byte_coder.md · bpe.md  (+ the Bengali bytes/token finding)
-    ├── architecture/                # gpt.md · decoder.md
-    ├── modules/                     # embeddings.md · causal_self_attention.md · feed_forward.md
-    │                                #   + reused_from_siblings.md — the provenance ledger, mirroring
-    │                                #     BERT/docs/modules/reused_from_transformer.md
-    ├── utils/                       # config.md · data_utils.md · loss.md · optimizer.md · train_utils.md
-    │                                #   · sampling.md · perf.md
-    └── scripts/                     # prepare_corpus.md · train_tokenizer.md · prepare_data.md · pretrain.md
-                                     #   · evaluate.md · generate.md
+    └── performance.md               # ★ what Karpathy uses on 8×A100 vs what actually works on MPS (table below)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Performance: build-nanoGPT's techniques, filtered through MPS (torch 2.12)
@@ -276,7 +261,6 @@
 #                                                             and 50257/50304 all within noise,
 #                                                             fp32 and fp16. 8192 kept anyway: free,
 #                                                             and the right shape on CUDA.
-#                                                             (docs/utils/config.md §6.3)
 #   TF32 matmul precision            ✅                    ❌ CUDA-only. Silent no-op on MPS —
 #                                                             do not copy this line from nanoGPT.
 #   DDP / multi-GPU                  ✅ 8 GPUs             ❌ One device. Not applicable.
